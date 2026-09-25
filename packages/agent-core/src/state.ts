@@ -1,4 +1,5 @@
 import type { Message } from "./types.js";
+import { chat } from "./ollama.js";
 
 /**
  * Estado del agente: "idle" (libre) o "busy" (trabajando en algo).
@@ -67,9 +68,19 @@ export async function handleMessage(message: Message): Promise<void> {
 
   try {
     console.log(`[agent-core] Procesando tarea ${taskId}: "${message.text}"`);
-    // Simulación de tarea pesada. Reemplazar por la lógica real.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    console.log(`[agent-core] Tarea ${taskId} completada`);
+
+    // Razonamiento con el modelo de Ollama Cloud.
+    const reply = await chat([
+      {
+        role: "system",
+        content:
+          "Sos un asistente personal autónomo. Respondé de forma clara y concisa en el idioma del usuario.",
+      },
+      { role: "user", content: message.text },
+    ]);
+    console.log(
+      `[agent-core] Tarea ${taskId} completada (${reply.model}, ${reply.evalCount ?? "?"} tokens): "${reply.content.slice(0, 80)}"`,
+    );
   } finally {
     agentState.finishTask();
   }
