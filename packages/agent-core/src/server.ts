@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { messageSchema } from "./types.js";
 import { agentState, handleMessage } from "./state.js";
 import { logger } from "./logger.js";
+import { memory } from "./memory.js";
 
 const app = new Hono();
 
@@ -87,6 +88,7 @@ app.onError((error, c) => {
 
 export function startServer(port = Number(process.env.PORT) || 3000) {
   logger.init();
+  memory.init();
   logger.info("http", `Servidor HTTP escuchando en http://localhost:${port}`);
   const server = serve({ fetch: app.fetch, port });
 
@@ -94,6 +96,7 @@ export function startServer(port = Number(process.env.PORT) || 3000) {
   const close = () => {
     logger.info("http", "Cerrando servidor");
     logger.close();
+    memory.close();
     server.close();
     process.exit(0);
   };

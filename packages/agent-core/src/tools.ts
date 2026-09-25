@@ -89,6 +89,12 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
+  /** Registra varias tools de una vez (encadenable). */
+  registerAll(tools: Array<Tool<any>>): this {
+    for (const t of tools) this.register(t);
+    return this;
+  }
+
   /** Serializa todas las tools al formato `tools` de la API de Ollama. */
   toOllamaTools(): OllamaTool[] {
     return [...this.tools.values()].map((tool) => ({

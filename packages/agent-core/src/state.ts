@@ -5,6 +5,10 @@ import { config } from "./config.js";
 import { ToolRegistry, ToolExecutor, type ToolResult } from "./tools.js";
 import { buildDefaultTools } from "./builtin-tools.js";
 import { listArtifacts, notifyResult } from "./gateway-notify.js";
+import { memory, getConstitution } from "./memory.js";
+import { consolidateMemory } from "./consolidate.js";
+import { searchLearnings } from "./semantic.js";
+import { SCRATCHPAD_PATH } from "./memory-tools.js";
 
 /**
  * Estado del agente: "idle" (libre) o "busy" (trabajando en algo).
@@ -136,6 +140,15 @@ async function runAgentLoop(
           durationMs: result.durationMs,
           error: result.error,
         });
+
+        // Capa 2 (episódico, append-only): registrar cada acción con su
+        // resultado para que tareas futuras puedan recordar qué funcionó.
+        memory.appendEpisode(
+          taskId,
+          "tool",
+          `${call.function.name}(${JSON.stringify(call.function.arguments).slice(0, 200)}) -> ${result.ok ? "ok" : `ERROR: ${(result.error ?? "").slice(0, 200)}`}`,
+          result.ok,
+        );
         allToolResults.push(result);
 
         messages.push({
@@ -154,13 +167,23 @@ async function runAgentLoop(
     );
     await opts.onSegmentEnd?.();
 
-    // Nudge: el sistema retoma el trabajo sin re-empezar.
+    // Nudge: el sistema retoma el trabajo sin re-empezar. Reinyecta el
+    // scratchpad (capa 1) para que no pierda el hilo entre segmentos.
+    let scratchpad = "";
+    try {
+      const sp = await import("./sandbox-files.js");
+      const res = await sp.readSandboxFile(taskId, SCRATCHPAD_PATH);
+      scratchpad = res?.content ?? "";
+    } catch {
+      // sin scratchpad: continuar igual
+    }
     messages.push({
       role: "user",
       content:
         `[sistema] Continuá la tarea desde donde quedaste (segmento ${segment + 1} de ${MAX_SEGMENTS}). ` +
         `No repitas pasos ya hechos ni pidas permiso: seguí trabajando hacia el objetivo original. ` +
-        `Si el objetivo ya está cumplido, respondé el resultado final sin llamar herramientas.`,
+        `Si el objetivo ya está cumplido, respondé el resultado final sin llamar herramientas.` +
+        (scratchpad ? `\n\n# Tu scratchpad actual (capa 1)\n${scratchpad}` : ""),
     });
 
     void exhausted;
@@ -193,21 +216,67 @@ export async function handleMessage(message: Message, taskIdOverride?: string): 
   });
 
   try {
+    // ── Consolidación de memoria (best-effort, nunca bloquea) ──────
+    try {
+      await consolidateMemory();
+    } catch {
+      // ya logueado dentro
+    }
+
+    // ── Construcción del contexto de memoria ───────────────────────
+    // Regla: nunca se tira todo al prompt. Constitución (capa 0) +
+    // hechos actuales (capa 4, acotados) + últimos episodios de tareas
+    // anteriores (capa 2, acotados) + top-K semántico (capa 3).
+    const constitution = getConstitution();
+
+    const facts = memory.getFact().slice(0, config.memoryFactsInContext);
+    const factsBlock = facts.length
+      ? "\n\n# Hechos del sistema (versionados)\n" +
+        facts.map((f) => `- ${f.key} = ${f.value} (v${f.version})`).join("\n")
+      : "";
+
+    const recentEpisodes = memory.recentEpisodes(
+      config.memoryEpisodesInContext,
+      taskId,
+    );
+    const episodesBlock = recentEpisodes.length
+      ? "\n\n# Últimas acciones de tareas anteriores\n" + recentEpisodes.map((e) => `- [${e.ts.slice(0, 16)}] ${e.text}`).join("\n")
+      : "";
+
+    let semanticBlock = "";
+    try {
+      const learnings = await searchLearnings(message.text, config.memorySemanticTopK);
+      if (learnings.length > 0) {
+        semanticBlock =
+          "\n\n# Aprendizajes relevantes (memoria de largo plazo)\n" +
+          learnings.map((l) => `- ${l.text}`).join("\n");
+      }
+    } catch {
+      // Ollama local caído o LanceDB indisponible: seguir sin capa 3.
+    }
+
+    const systemPrompt =
+      "Sos un asistente personal autónomo. Respondé de forma clara y concisa en el idioma del usuario. " +
+      "Tenés herramientas disponibles; usalas cuando te ayuden a responder mejor.\n\n" +
+      "Entorno de ejecución (sandbox): tenés un workspace propio y persistente por tarea en /workspace. " +
+      "Los archivos y las instalaciones (npm install dentro de /workspace) PERSISTEN entre llamadas de " +
+      "herramientas de la misma tarea, así que podés hacer procesos de varios pasos: instalar dependencias " +
+      "en un paso y usarlas en el siguiente. Tenés tiempo para hasta 15 rondas de herramientas por segmento, " +
+      "con segmentos de continuación; si una tarea es compleja, descomponela en pasos y seguí trabajando sin " +
+      "pedir permiso.\n\n" +
+      "Entrega de archivos: cuando generes un archivo que el usuario pidió ver (informes, imágenes, PDFs, " +
+      "etc.), marcálo con la tool deliver_file. NO entregues archivos de trabajo interno que el usuario no " +
+      "pidió." +
+      (constitution ? `\n\n# Constitución (reglas de prioridad máxima)\n${constitution}` : "") +
+      factsBlock +
+      episodesBlock +
+      semanticBlock;
+
     const deliverables = createDeliverables();
     const messages: ChatMessage[] = [
       {
         role: "system",
-        content:
-          "Sos un asistente personal autónomo. Respondé de forma clara y concisa en el idioma del usuario. " +
-          "Tenés herramientas disponibles; usalas cuando te ayuden a responder mejor.\n\n" +
-          "Entorno de ejecución (sandbox): tenés un workspace propio y persistente por tarea en /workspace. " +
-          "Los archivos y las instalaciones (npm install dentro de /workspace) PERSISTEN entre llamadas de " +
-          "herramientas de la misma tarea, así que podés hacer procesos de varios pasos: instalar dependencias " +
-          "en un paso y usarlas en el siguiente. Tenés tiempo para hasta 15 rondas de herramientas; si una " +
-          "tarea es compleja, descomponela en pasos y seguí trabajando sin pedir permiso.\n\n" +
-          "Entrega de archivos: cuando generes un archivo que el usuario pidió ver (informes, imágenes, PDFs, " +
-          "etc.), marcálo con la tool deliver_file. NO entregues archivos de trabajo interno que el usuario no " +
-          "pidió.",
+        content: systemPrompt,
       },
       { role: "user", content: message.text },
     ];

@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { readFile, readdir, stat } from "node:fs/promises";
-import { join, relative, isAbsolute } from "node:path";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { dirname, join, relative, isAbsolute } from "node:path";
 import { config } from "./config.js";
 import { commandRequestSchema } from "./types.js";
 import { CommandRunner } from "./runner.js";
@@ -126,6 +126,73 @@ app.get("/artifacts/:taskId/:path{.+}", async (c) => {
     }
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return c.json({ error: "artifact_not_found" }, 404);
+    }
+    throw error;
+  }
+});
+
+/** Límite de tamaño para la API de archivos (notas del agente). */
+const MAX_FILE_BYTES = 64 * 1024;
+
+/**
+ * POST /files/:taskId/:path{.+}
+ * Escribe un archivo de texto dentro del workspace de la tarea.
+ *
+ * Pensado para notas del agente (ej: .agent/scratchpad.md), no para
+ * artifacts de trabajo: el body es {"content": "..."} con límite de
+ * tamaño. La escritura crea directorios intermedios.
+ */
+app.post("/files/:taskId/:path{.+}", async (c) => {
+  const taskId = c.req.param("taskId");
+  const filePath = c.req.param("path");
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+    return c.json({ error: "invalid_task_id" }, 400);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const content = (body as { content?: unknown } | null)?.content;
+  if (typeof content !== "string") {
+    return c.json({ error: "invalid_body", message: "content debe ser string" }, 400);
+  }
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > MAX_FILE_BYTES) {
+    return c.json({ error: "too_large", message: `Máximo ${MAX_FILE_BYTES} bytes` }, 413);
+  }
+
+  try {
+    const full = resolveArtifactPath(taskId, filePath);
+    await mkdir(dirname(full), { recursive: true });
+    await writeFile(full, content, "utf8");
+    return c.json({ ok: true, path: filePath, bytes });
+  } catch (error) {
+    if (error instanceof SecurityError) {
+      return c.json({ error: "security_rejected", message: error.message }, 403);
+    }
+    throw error;
+  }
+});
+
+/**
+ * GET /files/:taskId/:path{.+}
+ * Lee un archivo de texto del workspace como JSON {"content": "..."}.
+ */
+app.get("/files/:taskId/:path{.+}", async (c) => {
+  const taskId = c.req.param("taskId");
+  const filePath = c.req.param("path");
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+    return c.json({ error: "invalid_task_id" }, 400);
+  }
+
+  try {
+    const full = resolveArtifactPath(taskId, filePath);
+    const content = await readFile(full, "utf8");
+    return c.json({ ok: true, path: filePath, content });
+  } catch (error) {
+    if (error instanceof SecurityError) {
+      return c.json({ error: "security_rejected", message: error.message }, 403);
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return c.json({ error: "file_not_found" }, 404);
     }
     throw error;
   }

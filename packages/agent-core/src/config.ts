@@ -37,4 +37,30 @@ export const config = {
 
   /** Puerto del servidor HTTP. */
   port: Number(process.env.PORT) || 3000,
+
+  // ── Memoria (capas 1-4) ──────────────────────────────────────────────
+
+  /** URL de Ollama LOCAL para embeddings de la capa semántica. */
+  embedBaseUrl: process.env.OLLAMA_LOCAL_URL ?? "http://127.0.0.1:11434",
+
+  /** Modelo de embeddings local. */
+  embedModel: process.env.OLLAMA_EMBED_MODEL ?? "qwen3-embedding:0.6b",
+
+  /** Dimensión de los vectores del modelo de embeddings. */
+  embedDim: Number(process.env.OLLAMA_EMBED_DIM) || 1024,
+
+  /**
+   * TTL de la capa semántica: aprendizajes sin reconfirmación dentro
+   * de este rango (días) se descartan en la próxima consolidación.
+   */
+  memoryTtlDays: Number(process.env.MEMORY_TTL_DAYS) || 30,
+
+  /** Episodios previos inyectados al contexto al iniciar una tarea. */
+  memoryEpisodesInContext: Number(process.env.MEMORY_EPISODES_IN_CONTEXT) || 8,
+
+  /** Máximo de aprendizajes semánticos por retrieval (top-K). */
+  memorySemanticTopK: Number(process.env.MEMORY_SEMANTIC_TOP_K) || 5,
+
+  /** Máximo de hechos del sistema inyectados al contexto. */
+  memoryFactsInContext: Number(process.env.MEMORY_FACTS_IN_CONTEXT) || 30,
 } as const;

@@ -3,6 +3,7 @@ import { ToolRegistry, ToolError } from "./tools.js";
 import { runCommand } from "./tool-run-command.js";
 import { shell } from "./tool-shell.js";
 import { deliverFile } from "./tool-deliver-file.js";
+import { memoryTools } from "./memory-tools.js";
 
 /**
  * Tools integradas del agente.
@@ -58,6 +59,7 @@ export function buildDefaultTools(): ToolRegistry {
     .register(calculate)
     .register(runCommand)
     .register(shell)
-    .register(deliverFile);
+    .register(deliverFile)
+    .registerAll([...memoryTools]);
   return registry;
 }
