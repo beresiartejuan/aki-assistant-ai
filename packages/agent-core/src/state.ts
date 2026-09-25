@@ -13,6 +13,8 @@ export type AgentState = "idle" | "busy";
 
 /** Config del loop agéntico. */
 const MAX_TOOL_ROUNDS = config.maxToolRounds;
+/** Máximo de segmentos de continuación (cada uno con MAX_TOOL_ROUNDS rondas). */
+const MAX_SEGMENTS = config.maxAgentSegments;
 
 /**
  * Estado en memoria del agente.
@@ -80,63 +82,97 @@ function createDeliverables() {
 }
 
 /**
- * Loop agéntico: modelo ↔ tools hasta respuesta final.
+ * Loop agéntico con continuación automática.
  *
- * En cada round el modelo puede pedir tool_calls; el executor las
- * valida (schema Zod), las ejecuta y agrega los resultados como
- * mensajes `tool`. Corta cuando el modelo responde sin tool_calls
- * o al agotar MAX_TOOL_ROUNDS (configurable, default 15).
+ * Cada "segmento" permite hasta MAX_TOOL_ROUNDS rondas modelo↔tools.
+ * Si el segmento se agota y el modelo sigue necesitando tools, en vez
+ * de forzar una respuesta cortada:
+ *  1. se notifica al usuario un mensaje de progreso (si corresponde),
+ *  2. se continúa con un nuevo segmento retomando el mismo historial
+ *     + un nudge del sistema, hasta un total de MAX_SEGMENTS segmentos.
+ *
+ * El loop solo corta con respuesta final (sin tool_calls) o al agotar
+ * los segmentos.
  */
 async function runAgentLoop(
   taskId: string,
   messages: ChatMessage[],
   deliverables: ReturnType<typeof createDeliverables>,
+  opts: { onSegmentEnd?: () => void | Promise<void> } = {},
 ): Promise<{ content: string; model: string; promptEvalCount?: number; evalCount?: number; rounds: number; toolResults: ToolResult[] }> {
   const tools = toolRegistry.toOllamaTools();
   const allToolResults: ToolResult[] = [];
+  let totalRounds = 0;
 
-  for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
-    const res = await chat(messages, { tools });
+  for (let segment = 1; segment <= MAX_SEGMENTS; segment++) {
+    let exhausted = false;
 
-    if (!res.toolCalls || res.toolCalls.length === 0) {
-      // Respuesta final: el modelo no pidió más tools.
-      return { ...res, rounds: round, toolResults: allToolResults };
-    }
+    for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+      totalRounds++;
+      const res = await chat(messages, { tools });
 
-    // Registrar el pedido del modelo (assistant con tool_calls) en el historial.
-    messages.push({
-      role: "assistant",
-      content: res.content,
-      toolCalls: res.toolCalls,
-    } as unknown as ChatMessage);
+      if (!res.toolCalls || res.toolCalls.length === 0) {
+        // Respuesta final: el modelo no pidió más tools.
+        return { ...res, rounds: totalRounds, toolResults: allToolResults };
+      }
 
-    // Ejecutar cada tool pedida y agregar el resultado como mensaje `tool`.
-    for (const call of res.toolCalls) {
-      const result = await toolExecutor.execute(
-        call.function.name,
-        call.function.arguments,
-        { userText: messages.find((m) => m.role === "user")?.content ?? "", taskId, deliverables },
-      );
-
-      logger.info("tools", `Tool ejecutada: ${call.function.name}`, {
-        ok: result.ok,
-        durationMs: result.durationMs,
-        error: result.error,
-      });
-      allToolResults.push(result);
-
+      // Registrar el pedido del modelo (assistant con tool_calls) en el historial.
       messages.push({
-        role: "tool",
-        content: JSON.stringify(result.ok ? result.result : { error: result.error }),
-        tool_name: call.function.name,
+        role: "assistant",
+        content: res.content,
+        toolCalls: res.toolCalls,
       } as unknown as ChatMessage);
+
+      // Ejecutar cada tool pedida y agregar el resultado como mensaje `tool`.
+      for (const call of res.toolCalls) {
+        const result = await toolExecutor.execute(
+          call.function.name,
+          call.function.arguments,
+          { userText: messages.find((m) => m.role === "user")?.content ?? "", taskId, deliverables },
+        );
+
+        logger.info("tools", `Tool ejecutada: ${call.function.name}`, {
+          ok: result.ok,
+          durationMs: result.durationMs,
+          error: result.error,
+        });
+        allToolResults.push(result);
+
+        messages.push({
+          role: "tool",
+          content: JSON.stringify(result.ok ? result.result : { error: result.error }),
+          tool_name: call.function.name,
+        } as unknown as ChatMessage);
+      }
     }
+    exhausted = true;
+
+    // Segmento agotado y el modelo sigue pidiendo tools: continuar.
+    logger.warn(
+      "agent-core",
+      `Segmento ${segment}/${MAX_SEGMENTS} agotado (${MAX_TOOL_ROUNDS} rondas) en tarea ${taskId}; continuando`,
+    );
+    await opts.onSegmentEnd?.();
+
+    // Nudge: el sistema retoma el trabajo sin re-empezar.
+    messages.push({
+      role: "user",
+      content:
+        `[sistema] Continuá la tarea desde donde quedaste (segmento ${segment + 1} de ${MAX_SEGMENTS}). ` +
+        `No repitas pasos ya hechos ni pidas permiso: seguí trabajando hacia el objetivo original. ` +
+        `Si el objetivo ya está cumplido, respondé el resultado final sin llamar herramientas.`,
+    });
+
+    void exhausted;
   }
 
-  // Se agotaron los rounds: forzar respuesta final sin tools.
-  logger.warn("agent-core", `MAX_TOOL_ROUNDS (${MAX_TOOL_ROUNDS}) alcanzado en tarea ${taskId}`);
+  // Se agotaron todos los segmentos: forzar respuesta final sin tools.
+  logger.error(
+    "agent-core",
+    `MAX_SEGMENTS (${MAX_SEGMENTS}) agotados (${totalRounds} rondas) en tarea ${taskId}; forzando respuesta final`,
+  );
   const final = await chat(messages);
-  return { ...final, rounds: MAX_TOOL_ROUNDS, toolResults: allToolResults };
+  return { ...final, rounds: totalRounds, toolResults: allToolResults };
 }
 
 /**
@@ -176,7 +212,23 @@ export async function handleMessage(message: Message, taskIdOverride?: string): 
       { role: "user", content: message.text },
     ];
 
-    const reply = await runAgentLoop(taskId, messages, deliverables);
+    const reply = await runAgentLoop(taskId, messages, deliverables, {
+      // Al cortar un segmento, avisar progreso al usuario (best-effort).
+      onSegmentEnd: async () => {
+        const chatIdStr = String(message.chatId);
+        if (!chatIdStr || chatIdStr === "test") return;
+        try {
+          await notifyResult({
+            taskId,
+            chatId: message.chatId,
+            text: "⏳ Seguí trabajando en tu pedido (tarea larga, no hiciste nada). Cuando termine te mando el resultado.",
+            artifacts: [],
+          });
+        } catch {
+          // best-effort: no abortar la tarea por un fallo de notificación
+        }
+      },
+    });
 
     logger.taskDone(taskId, {
       model: reply.model,
