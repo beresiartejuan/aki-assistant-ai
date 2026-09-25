@@ -25,8 +25,10 @@ app.get("/status", (c) => {
  * POST /messages
  * Recibe un mensaje para ser procesado por el agente.
  *
- * Las tareas son pesadas/largas, así que la respuesta es 202 Accepted:
- * el mensaje quedó aceptado y el procesamiento corre en background.
+ * La respuesta incluye el taskId: el workspace de la tarea queda en
+ * packages/executor/data/sandbox/<taskId>/ y los artifacts generados
+ * (informes, archivos) se pueden descargar del executor.
+ *
  * Si el agente ya está ocupado responde 409 Conflict con el estado actual.
  */
 app.post("/messages", async (c) => {
@@ -60,14 +62,15 @@ app.post("/messages", async (c) => {
   }
 
   // El procesamiento corre en background; no bloquea la respuesta.
-  void handleMessage(parsed.data).catch((error) => {
+  const taskId = parsed.data.id ?? crypto.randomUUID();
+  void handleMessage(parsed.data, taskId).catch((error) => {
     logger.error("http", "Error procesando mensaje", {
       error: error instanceof Error ? error.message : String(error),
     });
   });
 
   logger.info("http", "Mensaje aceptado", { id: parsed.data.id });
-  return c.json({ accepted: true }, 202);
+  return c.json({ accepted: true, taskId }, 202);
 });
 
 /** Ruta no encontrada. */

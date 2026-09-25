@@ -123,8 +123,8 @@ async function runAgentLoop(
 /**
  * Procesa un mensaje entrante con el loop agéntico.
  */
-export async function handleMessage(message: Message): Promise<void> {
-  const taskId = message.id ?? crypto.randomUUID();
+export async function handleMessage(message: Message, taskIdOverride?: string): Promise<void> {
+  const taskId = taskIdOverride ?? message.id ?? crypto.randomUUID();
 
   if (agentState.isBusy()) {
     throw new Error("El agente ya está procesando otra tarea");

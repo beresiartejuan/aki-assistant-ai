@@ -1,5 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { join, relative, isAbsolute } from "node:path";
 import { config } from "./config.js";
 import { commandRequestSchema } from "./types.js";
 import { CommandRunner } from "./runner.js";
@@ -7,6 +9,127 @@ import { SecurityError, workspaceDir } from "./security.js";
 
 const app = new Hono();
 const runner = new CommandRunner();
+
+/** MIME types mínimos para servir artifacts. */
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".zip": "application/zip",
+  ".tar": "application/x-tar",
+  ".gz": "application/gzip",
+};
+
+function mimeFor(path: string): string {
+  const ext = (extname(path) || "").toLowerCase();
+  return MIME_TYPES[ext] ?? "application/octet-stream";
+}
+
+function extname(p: string): string {
+  const base = p.split("/").pop() ?? p;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot) : "";
+}
+
+/**
+ * Resuelve un path relativo dentro del workspace de la tarea.
+ * Lanza SecurityError si escapa (traversal).
+ */
+function resolveArtifactPath(taskId: string, filePath: string): string {
+  if (filePath.includes("\0")) {
+    throw new SecurityError("Ruta inválida");
+  }
+  const workspace = workspaceDir(taskId);
+  const resolved = isAbsolute(filePath)
+    ? join(workspace, filePath)
+    : join(workspace, filePath);
+  const rel = relative(workspace, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel) || rel === "") {
+    throw new SecurityError(`Ruta fuera del workspace: ${filePath}`);
+  }
+  return resolved;
+}
+
+/**
+ * GET /artifacts/:taskId
+ * Lista los archivos generados por una tarea.
+ */
+app.get("/artifacts/:taskId", async (c) => {
+  const taskId = c.req.param("taskId");
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+    return c.json({ error: "invalid_task_id" }, 400);
+  }
+
+  try {
+    const dir = workspaceDir(taskId);
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    const files: Array<{ path: string; size: number; modifiedAt: string }> = [];
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const full = join(dir, entry.parentPath.replace(dir, ""), entry.name);
+      const info = await stat(full);
+      files.push({
+        path: relative(dir, full),
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+      });
+    }
+
+    return c.json({ taskId, files });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return c.json({ error: "task_not_found" }, 404);
+    }
+    throw error;
+  }
+});
+
+/**
+ * GET /artifacts/:taskId/:path{.*}
+ * Descarga un archivo del workspace (con Content-Type según extensión).
+ */
+app.get("/artifacts/:taskId/:path{.+}", async (c) => {
+  const taskId = c.req.param("taskId");
+  const filePath = c.req.param("path");
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+    return c.json({ error: "invalid_task_id" }, 400);
+  }
+
+  try {
+    const full = resolveArtifactPath(taskId, filePath);
+    const content = await readFile(full);
+    return c.body(
+      new Uint8Array(content),
+      200,
+      {
+        "Content-Type": mimeFor(filePath),
+        "Content-Disposition": `inline; filename="${(filePath.split("/").pop() ?? "file").replace(/"/g, "")}"`,
+      },
+    );
+  } catch (error) {
+    if (error instanceof SecurityError) {
+      return c.json({ error: "security_rejected", message: error.message }, 403);
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return c.json({ error: "artifact_not_found" }, 404);
+    }
+    throw error;
+  }
+});
 
 /**
  * POST /exec
