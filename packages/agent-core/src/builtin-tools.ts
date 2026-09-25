@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ToolRegistry, ToolError } from "./tools.js";
 import { runCommand } from "./tool-run-command.js";
 import { shell } from "./tool-shell.js";
+import { deliverFile } from "./tool-deliver-file.js";
 
 /**
  * Tools integradas del agente.
@@ -56,6 +57,7 @@ export function buildDefaultTools(): ToolRegistry {
     .register(getCurrentTime)
     .register(calculate)
     .register(runCommand)
-    .register(shell);
+    .register(shell)
+    .register(deliverFile);
   return registry;
 }

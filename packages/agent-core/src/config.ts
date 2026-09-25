@@ -24,6 +24,9 @@ export const config = {
   /** URL del executor para listar artifacts de la tarea. */
   executorUrl: process.env.EXECUTOR_URL ?? "http://localhost:3100",
 
+  /** Máximo de rondas del loop agéntico (modelo <-> tools). */
+  maxToolRounds: Number(process.env.AGENT_MAX_TOOL_ROUNDS) || 15,
+
   /** Puerto del servidor HTTP. */
   port: Number(process.env.PORT) || 3000,
 } as const;

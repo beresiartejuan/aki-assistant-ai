@@ -1,6 +1,7 @@
 import type { Message } from "./types.js";
 import { chat, type ChatMessage } from "./ollama.js";
 import { logger } from "./logger.js";
+import { config } from "./config.js";
 import { ToolRegistry, ToolExecutor, type ToolResult } from "./tools.js";
 import { buildDefaultTools } from "./builtin-tools.js";
 import { listArtifacts, notifyResult } from "./gateway-notify.js";
@@ -11,7 +12,7 @@ import { listArtifacts, notifyResult } from "./gateway-notify.js";
 export type AgentState = "idle" | "busy";
 
 /** Config del loop agéntico. */
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = config.maxToolRounds;
 
 /**
  * Estado en memoria del agente.
@@ -62,17 +63,34 @@ export const agentState = new AgentStateStore();
 export const toolRegistry: ToolRegistry = buildDefaultTools();
 export const toolExecutor = new ToolExecutor(toolRegistry);
 
+/** Registro de entregables de una tarea. */
+function createDeliverables() {
+  const set = new Set<string>();
+  return {
+    add(path: string): void {
+      set.add(path);
+    },
+    has(path: string): boolean {
+      return set.has(path);
+    },
+    list(): string[] {
+      return [...set];
+    },
+  };
+}
+
 /**
  * Loop agéntico: modelo ↔ tools hasta respuesta final.
  *
  * En cada round el modelo puede pedir tool_calls; el executor las
  * valida (schema Zod), las ejecuta y agrega los resultados como
  * mensajes `tool`. Corta cuando el modelo responde sin tool_calls
- * o al agotar MAX_TOOL_ROUNDS.
+ * o al agotar MAX_TOOL_ROUNDS (configurable, default 15).
  */
 async function runAgentLoop(
   taskId: string,
   messages: ChatMessage[],
+  deliverables: ReturnType<typeof createDeliverables>,
 ): Promise<{ content: string; model: string; promptEvalCount?: number; evalCount?: number; rounds: number; toolResults: ToolResult[] }> {
   const tools = toolRegistry.toOllamaTools();
   const allToolResults: ToolResult[] = [];
@@ -97,7 +115,7 @@ async function runAgentLoop(
       const result = await toolExecutor.execute(
         call.function.name,
         call.function.arguments,
-        { userText: messages.find((m) => m.role === "user")?.content ?? "", taskId },
+        { userText: messages.find((m) => m.role === "user")?.content ?? "", taskId, deliverables },
       );
 
       logger.info("tools", `Tool ejecutada: ${call.function.name}`, {
@@ -139,17 +157,26 @@ export async function handleMessage(message: Message, taskIdOverride?: string): 
   });
 
   try {
+    const deliverables = createDeliverables();
     const messages: ChatMessage[] = [
       {
         role: "system",
         content:
           "Sos un asistente personal autónomo. Respondé de forma clara y concisa en el idioma del usuario. " +
-          "Tenés herramientas disponibles; usalas cuando te ayuden a responder mejor.",
+          "Tenés herramientas disponibles; usalas cuando te ayuden a responder mejor.\n\n" +
+          "Entorno de ejecución (sandbox): tenés un workspace propio y persistente por tarea en /workspace. " +
+          "Los archivos y las instalaciones (npm install dentro de /workspace) PERSISTEN entre llamadas de " +
+          "herramientas de la misma tarea, así que podés hacer procesos de varios pasos: instalar dependencias " +
+          "en un paso y usarlas en el siguiente. Tenés tiempo para hasta 15 rondas de herramientas; si una " +
+          "tarea es compleja, descomponela en pasos y seguí trabajando sin pedir permiso.\n\n" +
+          "Entrega de archivos: cuando generes un archivo que el usuario pidió ver (informes, imágenes, PDFs, " +
+          "etc.), marcálo con la tool deliver_file. NO entregues archivos de trabajo interno que el usuario no " +
+          "pidió.",
       },
       { role: "user", content: message.text },
     ];
 
-    const reply = await runAgentLoop(taskId, messages);
+    const reply = await runAgentLoop(taskId, messages, deliverables);
 
     logger.taskDone(taskId, {
       model: reply.model,
@@ -168,17 +195,24 @@ export async function handleMessage(message: Message, taskIdOverride?: string): 
     // un chatId real (vino de Telegram, no de un test directo).
     const chatIdStr = String(message.chatId);
     if (chatIdStr && chatIdStr !== "test") {
+      // Solo los archivos que el agente marcó con deliver_file.
+      const marked = deliverables.list();
       const artifacts = await listArtifacts(taskId);
+      const toDeliver = marked.length
+        ? artifacts.filter((a) => marked.includes(a.path))
+        : []; // si no marcó nada, no se manda ningún archivo
+
       const delivered = await notifyResult({
         taskId,
         chatId: message.chatId,
         text: reply.content,
-        artifacts,
+        artifacts: toDeliver,
       });
       logger.info("agent-core", `Resultado notificado al gateway`, {
         taskId,
         delivered,
-        artifacts: artifacts.length,
+        artifactsMarked: marked.length,
+        artifactsDelivered: toDeliver.length,
       });
     }
   } catch (error) {

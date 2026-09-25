@@ -48,6 +48,14 @@ export interface ToolContext {
   userText: string;
   /** Id de la tarea en curso. */
   taskId: string;
+  /**
+   * Registro de archivos marcados como entregables por la tool
+   * deliver_file. Solo estos se envían al usuario al terminar.
+   */
+  deliverables?: {
+    add(path: string): void;
+    has(path: string): boolean;
+  };
 }
 
 /** Registro de tools disponible para el modelo. */
