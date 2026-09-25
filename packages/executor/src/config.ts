@@ -26,7 +26,11 @@ export const config = {
    */
   sandboxMode: (process.env.EXECUTOR_SANDBOX_MODE as SandboxMode) || "docker",
 
-  /** Directorio raíz del sandbox (workspaces por tarea, montado al contenedor). */
+  /**
+   * Directorio raíz del sandbox (workspaces por tarea, montado al
+   * contenedor). Acepta ruta relativa (al directorio del paquete) o
+   * absoluta (ej: /home/usuario/agent-workspaces).
+   */
   sandboxRoot: process.env.EXECUTOR_DATA_DIR ?? "data/sandbox",
 
   /** Imagen Docker del sandbox. */

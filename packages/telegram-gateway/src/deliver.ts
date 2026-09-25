@@ -1,3 +1,4 @@
+import path from "node:path";
 import { config } from "./config.js";
 import type { ResultPayload } from "./types.js";
 import { ip4Dispatcher } from "./http.js";
@@ -6,6 +7,28 @@ import { ip4Dispatcher } from "./http.js";
  * Entrega de resultados de una tarea al usuario de Telegram:
  * mensaje de texto (respuesta del modelo) + artifacts como documentos.
  */
+
+/**
+ * Ruta local absoluta del artifact en el host.
+ *
+ * El workspace del executor es <EXECUTOR_DATA_DIR>/<taskId>/. La base
+ * se resuelve: si GATEWAY_ARTIFACTS_DIR es relativo, se interpreta
+ * respecto al directorio de este paquete (para que el default
+ * "../executor/data/sandbox" funcione sin importar desde dónde se
+ * arranque el proceso).
+ */
+function localArtifactPath(taskId: string, filePath: string): string {
+  const base = path.isAbsolute(config.workspaceBaseDir)
+    ? config.workspaceBaseDir
+    : path.resolve(PACKAGE_ROOT, config.workspaceBaseDir);
+  return path.join(base, taskId, filePath.replace(/^\//, ""));
+}
+
+/** Directorio de este paquete (packages/telegram-gateway). */
+const PACKAGE_ROOT = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  "..",
+);
 
 /** Descarga un artifact del executor y lo devuelve como Buffer. */
 async function fetchArtifact(
@@ -124,14 +147,21 @@ export async function deliverResult(payload: ResultPayload): Promise<void> {
     if (artifact.size > config.maxArtifactBytes) {
       await sendText(
         payload.chatId,
-        `⚠️ El archivo ${artifact.path} (${Math.round(artifact.size / 1024)} KB) supera el límite de Telegram y no pudo enviarse.`,
+        `⚠️ El archivo ${artifact.path} supera el límite de Telegram (${formatBytes(
+          artifact.size,
+        )}) y no pudo enviarse.\n` +
+          `Lo encontrás en: ${localArtifactPath(payload.taskId, artifact.path)}`,
       );
       continue;
     }
 
     const file = await fetchArtifact(payload.taskId, artifact.path);
     if (!file) {
-      await sendText(payload.chatId, `⚠️ No pude recuperar el archivo ${artifact.path}.`);
+      await sendText(
+        payload.chatId,
+        `⚠️ No pude recuperar el archivo ${artifact.path}.\n` +
+          `Lo encontrás en: ${localArtifactPath(payload.taskId, artifact.path)}`,
+      );
       continue;
     }
 
@@ -143,6 +173,19 @@ export async function deliverResult(payload: ResultPayload): Promise<void> {
     );
     if (!ok) {
       console.error(`[gateway] Falló el envío de ${artifact.path} a Telegram`);
+      // Aviso con la ruta local para que el usuario no pierda el archivo.
+      await sendText(
+        payload.chatId,
+        `⚠️ No pude enviar ${artifact.path} por Telegram.\n` +
+          `Lo encontrás en: ${localArtifactPath(payload.taskId, artifact.path)}`,
+      );
     }
   }
+}
+
+/** Formatea bytes en KB/MB legibles. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

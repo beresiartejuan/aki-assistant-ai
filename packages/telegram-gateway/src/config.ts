@@ -22,6 +22,14 @@ export const config = {
   /** URL base del executor (para descargar artifacts). */
   executorUrl: process.env.EXECUTOR_URL ?? "http://localhost:3100",
 
+  /**
+   * Directorio base de workspaces del executor (mismo valor que
+   * EXECUTOR_DATA_DIR del executor). Se usa para informar al usuario
+   * la ruta local de un archivo cuando no se puede enviar por Telegram.
+   * Es relativo al directorio del paquete si no es absoluto.
+   */
+  workspaceBaseDir: process.env.GATEWAY_ARTIFACTS_DIR ?? "../executor/data/sandbox",
+
   /** Puerto del servidor HTTP del gateway (recibe resultados de agent-core). */
   port: Number(process.env.GATEWAY_PORT) || 3200,
 
