@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ToolRegistry, ToolError } from "./tools.js";
 import { runCommand } from "./tool-run-command.js";
+import { shell } from "./tool-shell.js";
 
 /**
  * Tools integradas del agente.
@@ -51,6 +52,10 @@ const calculate = {
 /** Herramientas por defecto del agente. */
 export function buildDefaultTools(): ToolRegistry {
   const registry = new ToolRegistry();
-  registry.register(getCurrentTime).register(calculate).register(runCommand);
+  registry
+    .register(getCurrentTime)
+    .register(calculate)
+    .register(runCommand)
+    .register(shell);
   return registry;
 }

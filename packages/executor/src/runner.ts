@@ -7,25 +7,24 @@ import {
   resolveInsideWorkspace,
   ensureWorkspace,
   buildEnv,
+  dockerArgsFor,
 } from "./security.js";
 
 /**
  * Ejecutor de comandos en sandbox.
  *
- * - argv directo con shell: false (no hay shell injection).
- * - cwd dentro del workspace de la tarea (resolución estricta).
- * - env mínimo (no hereda el proceso).
- * - timeout con SIGTERM → grace → SIGKILL.
- * - stdout/stderr capturados con límite de tamaño.
- * - concurrencia limitada (cola simple).
+ * Dos modos (config.sandboxMode):
+ * - "docker": spawn de `docker run` con la imagen del sandbox, workspace
+ *   montado como volume y límites de RAM/CPU. Aislamiento real.
+ * - "process": ejecución directa en el host con workspace enjaulado y
+ *   denylist (fallback de desarrollo, sin Docker).
+ *
+ * Común: argv directo (sin shell), timeout SIGTERM→SIGKILL, límite de
+ * salida, concurrencia limitada (cola simple).
  */
 export class CommandRunner {
   private running = 0;
   private queue: Array<() => void> = [];
-
-  constructor() {
-    // noop; config se lee en cada ejecución (testable).
-  }
 
   /** Slot disponible inmediato o espera a que se libere. */
   private async acquire(): Promise<() => void> {
@@ -52,81 +51,139 @@ export class CommandRunner {
     });
   }
 
-  /** Ejecuta un comando en el workspace de la tarea. */
+  /** Ejecuta un comando en el sandbox configurado. */
   async run(req: CommandRequest): Promise<CommandResult> {
     const release = await this.acquire();
     try {
-      return await this.runUnsafe(req);
+      return config.sandboxMode === "docker"
+        ? await this.runDocker(req)
+        : await this.runProcess(req);
     } finally {
       release();
     }
   }
 
-  private async runUnsafe(req: CommandRequest): Promise<CommandResult> {
-    // 1. Validación de seguridad (denylist, traversal).
+  /** Modo docker: cada comando en un contenedor efímero con límites. */
+  private async runDocker(req: CommandRequest): Promise<CommandResult> {
     assertCommandAllowed(req.command, req.args);
 
-    // 2. Workspace de la tarea; creación idempotente.
+    // El workspace de la tarea se monta en /workspace del contenedor.
+    await ensureWorkspace(req.taskId);
+    const hostWorkspace = resolveInsideWorkspace(req.taskId, req.cwd ?? undefined);
+
+    // docker run con límites de recursos y auto-eliminación.
+    const dockerArgs = dockerArgsFor({
+      image: config.sandboxImage,
+      hostWorkspace,
+      memory: config.containerMemoryLimit,
+      cpus: config.containerCpus,
+      env: buildEnv(req.env),
+      command: req.command,
+      args: req.args,
+      userCwd: req.cwd,
+    });
+
+    const timeoutMs = Math.min(req.timeoutMs ?? config.defaultTimeoutMs, config.maxTimeoutMs);
+    const start = Date.now();
+
+    // El contenedor corre como root del docker (mapeado a sandbox uid 1000
+    // dentro de la imagen); docker CLI del host lo lanza.
+    const child = spawn("docker", dockerArgs, {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const out = await collectOutput(child, timeoutMs, config.maxOutputChars);
+    return finishResult(req, out, start);
+  }
+
+  /** Modo process: ejecución directa en el host (fallback de desarrollo). */
+  private async runProcess(req: CommandRequest): Promise<CommandResult> {
+    assertCommandAllowed(req.command, req.args);
+
     await ensureWorkspace(req.taskId);
     const cwd = resolveInsideWorkspace(req.taskId, req.cwd);
-
-    // 3. Timeout efectivo (clamp al máximo).
     const timeoutMs = Math.min(req.timeoutMs ?? config.defaultTimeoutMs, config.maxTimeoutMs);
 
     const start = Date.now();
     const child = spawn(req.command, req.args, {
       cwd,
       env: buildEnv(req.env),
-      shell: false, // argv directo, sin shell
+      shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    const out = await collectOutput(child, timeoutMs, config.maxOutputChars);
+    return finishResult(req, out, start);
+  }
+}
+
+interface RawOutput {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  timedOut: boolean;
+}
+
+/** Captura stdout/stderr con límite y aplica timeout con SIGTERM→SIGKILL. */
+function collectOutput(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number,
+  maxChars: number,
+): Promise<RawOutput> {
+  return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let truncated = false;
-    const max = config.maxOutputChars;
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (stdout.length < max) stdout += chunk.toString("utf8");
-      else truncated = true;
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (stderr.length < max) stderr += chunk.toString("utf8");
-      else truncated = true;
-    });
-
     let timedOut = false;
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdout.length < maxChars) stdout += chunk.toString("utf8");
+      else truncated = true;
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderr.length < maxChars) stderr += chunk.toString("utf8");
+      else truncated = true;
+    });
+
     const killTimer = setTimeout(() => {
       timedOut = true;
-      // Grace: SIGTERM y luego SIGKILL si no murió.
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 2000).unref();
     }, timeoutMs);
 
-    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-      child.on("error", (error) => {
-        // spawn falló (binario inexistente, permisos): devolver como stderr.
-        stderr += `\n[executor] spawn error: ${error.message}`;
-        resolve({ code: -1, signal: null });
-      });
-      child.on("close", (code, signal) => resolve({ code, signal }));
+    child.on("error", (error) => {
+      stderr += `\n[executor] spawn error: ${error.message}`;
+      resolve({ code: -1, signal: null, stdout, stderr, truncated, timedOut });
     });
 
-    clearTimeout(killTimer);
+    child.on("close", (code, signal) => {
+      clearTimeout(killTimer);
+      resolve({ code, signal, stdout, stderr, truncated, timedOut });
+    });
+  });
+}
 
-    return {
-      taskId: req.taskId,
-      command: req.command,
-      args: req.args,
-      exitCode: result.code,
-      signal: result.signal,
-      stdout: truncate(stdout, max),
-      stderr: truncate(stderr, max),
-      timedOut,
-      truncated,
-      durationMs: Date.now() - start,
-    };
-  }
+/** Construye el CommandResult final a partir del output crudo. */
+function finishResult(
+  req: CommandRequest,
+  out: RawOutput,
+  start: number,
+): CommandResult {
+  return {
+    taskId: req.taskId,
+    command: req.command,
+    args: req.args,
+    exitCode: out.code,
+    signal: out.signal,
+    stdout: truncate(out.stdout, config.maxOutputChars),
+    stderr: truncate(out.stderr, config.maxOutputChars),
+    timedOut: out.timedOut,
+    truncated: out.truncated,
+    durationMs: Date.now() - start,
+  };
 }
 
 function truncate(text: string, max: number): string {

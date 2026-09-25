@@ -22,7 +22,7 @@ import { config } from "./config.js";
  */
 const DENYLISTED_BINARIES = new Set([
   // Shell interpreters (podrían escapar con -c).
-  "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
+  "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell",
   // Gestión de proceso/sistema.
   "reboot", "shutdown", "poweroff", "halt", "init", "systemctl", "service",
   "kill", "killall", "pkill", "pgrep",
@@ -40,9 +40,12 @@ const DENYLISTED_BINARIES = new Set([
 
 /** Flags/substrings que deniegan en cualquier comando. */
 const DENYLISTED_ARG_PATTERNS = [
-  /^\//, // args absolutos (ej: /etc/passwd como arg)
-  /:/, // rutas estilo "host:recurso" (scp) y similares
-  /^\.\./, // traversal explícito
+  // Rutas absolutas como argumento único (ej: /etc/passwd).
+  // Permite código que contiene paths dentro de strings más largos
+  // (eso queda contenido por el sandbox del contenedor).
+  /^\/[a-zA-Z0-9_.-]+$/,
+  // Traversal explícito.
+  /^\.\./,
 ];
 
 /** Env que se hereda al proceso del comando (mínimo). */
@@ -135,4 +138,79 @@ export function buildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
     env[key] = String(value);
   }
   return env;
+}
+
+/** Opciones para armar el comando docker run del sandbox. */
+export interface DockerRunOptions {
+  image: string;
+  /** Path absoluto en el host del workspace de la tarea. */
+  hostWorkspace: string;
+  /** Límite de RAM en bytes. */
+  memory: number;
+  /** CPUs (0 = sin límite). */
+  cpus: number;
+  /** Env mínimo para el proceso dentro del contenedor. */
+  env: NodeJS.ProcessEnv;
+  /** Comando a ejecutar. */
+  command: string;
+  /** Args del comando. */
+  args: string[];
+  /** cwd relativo dentro del workspace (opcional). */
+  userCwd?: string;
+}
+
+/**
+ * Arma el argv completo de `docker run` para un comando del sandbox.
+ *
+ * Flags de aislamiento:
+ * - `--rm`: contenedor efímero, se elimina al morir.
+ * - `--network none`: sin red (bloquea exfiltración y descargas).
+ * - `--memory` + `--memory-swap`: límite duro de RAM (sin swap extra).
+ * - `--pids-limit`: anti fork-bomb.
+ * - `--cap-drop ALL`: sin capabilities del kernel.
+ * - `--security-opt no-new-privileges`: sin escalada de privilegios.
+ * - `--read-only` no se usa: el workspace debe ser escribible (volume rw).
+ * - `-v hostWorkspace:/workspace`: workspace de la tarea.
+ * - `-w /workspace[/subdir]`: cwd dentro del workspace.
+ * - `--user 1000:1000`: uid no privilegiado (coincide con el host).
+ * - `--env`: solo las variables del env mínimo.
+ */
+export function dockerArgsFor(options: DockerRunOptions): string[] {
+  const args: string[] = [
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--memory",
+    String(options.memory),
+    "--memory-swap",
+    String(options.memory), // sin swap adicional
+    "--pids-limit",
+    "128",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--volume",
+    `${options.hostWorkspace}:/workspace`,
+    "--workdir",
+    options.userCwd
+      ? `/workspace/${options.userCwd.replace(/^\//, "")}`
+      : "/workspace",
+    "--user",
+    "1000:1000",
+  ];
+
+  if (options.cpus > 0) {
+    args.push("--cpus", String(options.cpus));
+  }
+
+  // Env mínimo dentro del contenedor.
+  for (const [key, value] of Object.entries(options.env)) {
+    if (value === undefined) continue;
+    args.push("--env", `${key}=${value}`);
+  }
+
+  args.push(options.image, options.command, ...options.args);
+  return args;
 }

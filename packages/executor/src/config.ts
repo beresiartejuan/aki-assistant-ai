@@ -12,12 +12,32 @@ function loadEnvFile(): void {
 }
 loadEnvFile();
 
+/** Modo de ejecución del sandbox. */
+export type SandboxMode = "docker" | "process";
+
 export const config = {
   /** Puerto del servidor HTTP. */
   port: Number(process.env.PORT) || 3100,
 
-  /** Directorio raíz del sandbox (workspaces por tarea). */
+  /**
+   * Modo del sandbox:
+   * - "docker": cada comando corre en un contenedor efímero (recomendado).
+   * - "process": ejecución directa en el host (fallback para desarrollo).
+   */
+  sandboxMode: (process.env.EXECUTOR_SANDBOX_MODE as SandboxMode) || "docker",
+
+  /** Directorio raíz del sandbox (workspaces por tarea, montado al contenedor). */
   sandboxRoot: process.env.EXECUTOR_DATA_DIR ?? "data/sandbox",
+
+  /** Imagen Docker del sandbox. */
+  sandboxImage: process.env.EXECUTOR_SANDBOX_IMAGE ?? "aki-sandbox:latest",
+
+  /** Límite de RAM por contenedor (bytes): 2GB. */
+  containerMemoryLimit:
+    Number(process.env.EXECUTOR_CONTAINER_MEMORY) || 2 * 1024 * 1024 * 1024,
+
+  /** CPUs asignadas al contenedor (opcional, 0 = sin límite). */
+  containerCpus: Number(process.env.EXECUTOR_CONTAINER_CPUS) || 0,
 
   /** Timeout por defecto de un comando (ms). */
   defaultTimeoutMs: Number(process.env.EXECUTOR_DEFAULT_TIMEOUT_MS) || 15_000,
