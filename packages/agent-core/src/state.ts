@@ -1,5 +1,6 @@
 import type { Message } from "./types.js";
 import { chat } from "./ollama.js";
+import { logger } from "./logger.js";
 
 /**
  * Estado del agente: "idle" (libre) o "busy" (trabajando en algo).
@@ -65,10 +66,13 @@ export async function handleMessage(message: Message): Promise<void> {
   }
 
   agentState.startTask(taskId);
+  logger.taskStart(taskId, String(message.chatId), message.text);
+  logger.info("agent-core", `Procesando tarea ${taskId}`, {
+    chatId: message.chatId,
+    text: message.text,
+  });
 
   try {
-    console.log(`[agent-core] Procesando tarea ${taskId}: "${message.text}"`);
-
     // Razonamiento con el modelo de Ollama Cloud.
     const reply = await chat([
       {
@@ -78,9 +82,23 @@ export async function handleMessage(message: Message): Promise<void> {
       },
       { role: "user", content: message.text },
     ]);
-    console.log(
-      `[agent-core] Tarea ${taskId} completada (${reply.model}, ${reply.evalCount ?? "?"} tokens): "${reply.content.slice(0, 80)}"`,
-    );
+
+    logger.taskDone(taskId, {
+      model: reply.model,
+      replyText: reply.content,
+      promptTokens: reply.promptEvalCount,
+      evalTokens: reply.evalCount,
+    });
+    logger.info("agent-core", `Tarea ${taskId} completada`, {
+      model: reply.model,
+      evalCount: reply.evalCount,
+    });
+  } catch (error) {
+    logger.taskFail(taskId, error instanceof Error ? error.message : String(error));
+    logger.error("agent-core", `Tarea ${taskId} falló`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     agentState.finishTask();
   }

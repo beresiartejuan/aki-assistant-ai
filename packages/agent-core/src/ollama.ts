@@ -51,7 +51,7 @@ export class OllamaError extends Error {
 export async function chat(
   messages: ChatMessage[],
   options: { model?: string } = {},
-): Promise<{ content: string; model: string; evalCount?: number }> {
+): Promise<{ content: string; model: string; promptEvalCount?: number; evalCount?: number }> {
   if (!config.ollamaApiKey) {
     throw new OllamaError("OLLAMA_API_KEY no está definida");
   }
@@ -82,5 +82,10 @@ export async function chat(
     throw new OllamaError("Ollama devolvió una respuesta vacía");
   }
 
-  return { content, model: body.model, evalCount: body.eval_count };
+  return {
+    content,
+    model: body.model,
+    promptEvalCount: body.prompt_eval_count,
+    evalCount: body.eval_count,
+  };
 }

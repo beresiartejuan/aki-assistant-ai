@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { fileURLToPath } from "node:url";
 import { messageSchema } from "./types.js";
 import { agentState, handleMessage } from "./state.js";
+import { logger } from "./logger.js";
 
 const app = new Hono();
 
@@ -60,9 +61,12 @@ app.post("/messages", async (c) => {
 
   // El procesamiento corre en background; no bloquea la respuesta.
   void handleMessage(parsed.data).catch((error) => {
-    console.error("[agent-core] Error procesando mensaje:", error);
+    logger.error("http", "Error procesando mensaje", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 
+  logger.info("http", "Mensaje aceptado", { id: parsed.data.id });
   return c.json({ accepted: true }, 202);
 });
 
@@ -71,13 +75,28 @@ app.notFound((c) => c.json({ error: "not_found" }, 404));
 
 /** Manejador global de errores. */
 app.onError((error, c) => {
-  console.error("[agent-core] Error no manejado:", error);
+  logger.error("http", "Error no manejado", {
+    error: error instanceof Error ? error.message : String(error),
+    path: c.req.path,
+  });
   return c.json({ error: "internal_error" }, 500);
 });
 
 export function startServer(port = Number(process.env.PORT) || 3000) {
+  logger.init();
+  logger.info("http", `Servidor HTTP escuchando en http://localhost:${port}`);
   const server = serve({ fetch: app.fetch, port });
-  console.log(`[agent-core] Servidor HTTP escuchando en http://localhost:${port}`);
+
+  // Cierre graceful: liberar la BD de logs.
+  const close = () => {
+    logger.info("http", "Cerrando servidor");
+    logger.close();
+    server.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+
   return server;
 }
 

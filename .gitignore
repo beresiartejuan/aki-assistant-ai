@@ -13,6 +13,9 @@ logs/
 npm-debug.log*
 pnpm-debug.log*
 
+# BD de logs del agent-core
+data/
+
 # Entorno
 .env
 .env.*
