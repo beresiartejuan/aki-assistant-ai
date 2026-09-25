@@ -18,6 +18,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Datos de la cola del gateway
+data/
+
 # Editor / SO
 .vscode/
 .idea/
