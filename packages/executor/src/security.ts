@@ -19,20 +19,25 @@ import { config } from "./config.js";
  * Binarios y comandos con impacto fuera del sandbox o potencial de
  * escape. Es un denylist (no un allowlist) a propósito: más flexible
  * para desarrollo, pero se ajusta por env si se quiere endurecer.
+ *
+ * Nota: los clientes de red (curl, wget, ssh, ping...) NO están
+ * denegados: el sandbox tiene acceso a red por diseño y el
+ * aislamiento real lo da el contenedor. Los comandos destructivos o
+ * de privilegio siguen bloqueados.
  */
 const DENYLISTED_BINARIES = new Set([
-  // Shell interpreters (podrían escapar con -c).
-  "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell",
-  // Gestión de proceso/sistema.
+  // Shell interpreters como comando raíz (el sandbox provee
+  // sandbox-shell para scripts); podría escapar del enjaulamiento
+  // de rutas del denylist de args.
+  "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
+  // Gestión de proceso/sistema del host.
   "reboot", "shutdown", "poweroff", "halt", "init", "systemctl", "service",
   "kill", "killall", "pkill", "pgrep",
   // Privilegios.
   "sudo", "su", "doas", "pkexec", "passwd", "chsh", "chroot",
-  // Red/remote (podría exfiltrar o descargar payloads).
-  "ssh", "scp", "sftp", "curl", "wget", "nc", "ncat", "netcat", "telnet", "ftp", "ping",
   // Persistencia/servicios.
   "crontab", "at", "systemd-run", "mount", "umount", "fdisk", "mkfs", "dd",
-  // Núcleo/módulos.
+  // Núcleo/módulos y firewall.
   "modprobe", "insmod", "rmmod", "iptables", "nft", "tcpdump",
   // Gestores de paquetes (modifican el host, no el sandbox).
   "apt", "apt-get", "dnf", "yum", "pacman", "brew", "snap", "dpkg", "rpm",
@@ -149,6 +154,8 @@ export interface DockerRunOptions {
   memory: number;
   /** CPUs (0 = sin límite). */
   cpus: number;
+  /** Modo de red: "none", "bridge" o "host". */
+  networkMode: string;
   /** Env mínimo para el proceso dentro del contenedor. */
   env: NodeJS.ProcessEnv;
   /** Comando a ejecutar. */
@@ -164,12 +171,11 @@ export interface DockerRunOptions {
  *
  * Flags de aislamiento:
  * - `--rm`: contenedor efímero, se elimina al morir.
- * - `--network none`: sin red (bloquea exfiltración y descargas).
+ * - `--network <mode>`: none (sin red) o bridge/host según config.
  * - `--memory` + `--memory-swap`: límite duro de RAM (sin swap extra).
  * - `--pids-limit`: anti fork-bomb.
  * - `--cap-drop ALL`: sin capabilities del kernel.
  * - `--security-opt no-new-privileges`: sin escalada de privilegios.
- * - `--read-only` no se usa: el workspace debe ser escribible (volume rw).
  * - `-v hostWorkspace:/workspace`: workspace de la tarea.
  * - `-w /workspace[/subdir]`: cwd dentro del workspace.
  * - `--user 1000:1000`: uid no privilegiado (coincide con el host).
@@ -180,7 +186,7 @@ export function dockerArgsFor(options: DockerRunOptions): string[] {
     "run",
     "--rm",
     "--network",
-    "none",
+    options.networkMode,
     "--memory",
     String(options.memory),
     "--memory-swap",
@@ -189,6 +195,8 @@ export function dockerArgsFor(options: DockerRunOptions): string[] {
     "128",
     "--cap-drop",
     "ALL",
+    "--cap-add",
+    "NET_RAW", // ping y similares (ICMP crudo); sin escalada de privilegios
     "--security-opt",
     "no-new-privileges",
     "--volume",

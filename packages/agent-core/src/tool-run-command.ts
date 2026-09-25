@@ -44,7 +44,8 @@ export const runCommand = {
   description:
     "Ejecuta un comando en un sandbox Linux aislado (workspace propio por tarea). " +
     "Ideal para cálculos con node, manipular archivos, inspeccionar datos, etc. " +
-    "Comandos peligrosos (bash -c, curl, ssh, sudo...) son rechazados. " +
+    "Comandos peligrosos (sudo, reboot, etc.) son rechazados. " +
+    "Hay acceso a internet: curl, wget y fetch funcionan. " +
     "No hay shell: pasá el binario y sus argumentos por separado.",
   schema: z.object({
     /** Comando a ejecutar (argv, sin shell). */

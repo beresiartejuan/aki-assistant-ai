@@ -28,6 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     bc \
     time \
+    wget \
+    iputils-ping \
+    dnsutils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

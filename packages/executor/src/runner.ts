@@ -77,6 +77,7 @@ export class CommandRunner {
       hostWorkspace,
       memory: config.containerMemoryLimit,
       cpus: config.containerCpus,
+      networkMode: config.networkMode,
       env: buildEnv(req.env),
       command: req.command,
       args: req.args,

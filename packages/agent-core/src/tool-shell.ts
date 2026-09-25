@@ -49,8 +49,8 @@ export const shell = {
     "Ejecuta un comando de shell dentro de un sandbox Linux aislado (Docker sin red, límite de 2GB RAM, usuario sin privilegios). " +
     "Soporta pipes, redirects y encadenamiento (&&, ||, ;). " +
     "Los archivos solo existen dentro del workspace de la tarea: mkdir, rm, mv, cp etc. afectan únicamente a ese entorno, nunca al sistema real. " +
-    "Herramientas disponibles: node, python3, grep, find, sort, awk, sed, tar, gzip, sqlite3, jq, git y coreutils estándar. " +
-    "No hay acceso a internet ni a archivos del host fuera del workspace.",
+    "Herramientas disponibles: node, python3, curl, wget, ping, grep, find, sort, awk, sed, tar, gzip, sqlite3, jq, git y coreutils estándar. " +
+    "Hay acceso a internet; los archivos solo existen dentro del workspace de la tarea.",
   schema: z.object({
     /** Script de shell a ejecutar. */
     script: z

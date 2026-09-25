@@ -32,6 +32,15 @@ export const config = {
   /** Imagen Docker del sandbox. */
   sandboxImage: process.env.EXECUTOR_SANDBOX_IMAGE ?? "aki-sandbox:latest",
 
+  /**
+   * Modo de red del contenedor:
+   * - "none": sin red (por defecto hasta ahora).
+   * - "bridge": red Docker default (NAT, acceso a internet y a la red
+   *   del host vía su IP).
+   * - "host": usa la pila de red del host directamente.
+   */
+  networkMode: process.env.EXECUTOR_NETWORK_MODE ?? "bridge",
+
   /** Límite de RAM por contenedor (bytes): 2GB. */
   containerMemoryLimit:
     Number(process.env.EXECUTOR_CONTAINER_MEMORY) || 2 * 1024 * 1024 * 1024,
