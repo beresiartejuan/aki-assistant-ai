@@ -1,3 +1,5 @@
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { Bot } from "grammy";
 import { config } from "./config.js";
 import type { PersistentQueue } from "./queue.js";
@@ -31,6 +33,61 @@ const fetchIp4 = async (input: Parameters<typeof undiciFetch>[0], init?: Paramet
   }
   return undiciFetch(input, { ...(init ?? {}), dispatcher: ip4Agent, signal: nativeSignal });
 };
+
+/**
+ * Checkpoint del último update_id procesado.
+ *
+ * Sin esto, cada reinicio del gateway reprocesa los mensajes viejos
+ * que Telegram todavía tiene en su cola. El checkpoint se persiste a
+ * disco y se pasa como `offset` a getUpdates (Telegram descarta los
+ * updates anteriores a offset una vez confirmados).
+ */
+export class UpdateCheckpoint {
+  private lastUpdateId = 0;
+  private flushTimer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly filePath: string) {}
+
+  /** Carga el último update_id persistido. */
+  async load(): Promise<void> {
+    try {
+      const raw = await readFile(this.filePath, "utf8");
+      this.lastUpdateId = Number(JSON.parse(raw).lastUpdateId) || 0;
+    } catch {
+      this.lastUpdateId = 0; // primera ejecución
+    }
+    if (this.lastUpdateId > 0) {
+      console.log(`[gateway] Checkpoint de updates: continuando desde ${this.lastUpdateId}`);
+    }
+  }
+
+  /** Registra el update procesado y persiste el checkpoint (debounced). */
+  mark(updateId: number): void {
+    if (updateId <= this.lastUpdateId) return;
+    this.lastUpdateId = updateId;
+    // Debounce: Telegram repite update_id, no hace falta flush por update.
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => this.flush(), 2000);
+    this.flushTimer.unref();
+  }
+
+  /** El valor a mandar como offset a getUpdates (último + 1), o undefined. */
+  get offset(): number | undefined {
+    return this.lastUpdateId > 0 ? this.lastUpdateId + 1 : undefined;
+  }
+
+  /** Persistencia atómica inmediata. */
+  async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    const tmp = `${this.filePath}.tmp`;
+    await mkdir(dirname(this.filePath), { recursive: true });
+    await writeFile(tmp, JSON.stringify({ lastUpdateId: this.lastUpdateId }), "utf8");
+    await rename(tmp, this.filePath);
+  }
+}
 
 export function createBot(queue: PersistentQueue): Bot {
   if (!config.botToken) {
@@ -83,11 +140,38 @@ export function createBot(queue: PersistentQueue): Bot {
   return bot;
 }
 
-/** Arranca el polling con parada graceful en SIGINT/SIGTERM. */
-export async function startBot(bot: Bot): Promise<void> {
+/**
+ * Arranca el polling con parada graceful en SIGINT/SIGTERM.
+ *
+ * Inyecta el último update_id procesado en el campo interno de grammY
+ * (lastTriedUpdateId) para que el primer getUpdates use
+ * offset = último+1 y Telegram no re-envíe mensajes ya procesados.
+ */
+export async function startBot(bot: Bot, checkpoint?: UpdateCheckpoint): Promise<void> {
   process.once("SIGINT", () => bot.stop());
   process.once("SIGTERM", () => bot.stop());
+
+  if (checkpoint && checkpoint.offset !== undefined) {
+    // Campo interno de grammY (privado en types, estable en runtime):
+    // con esto el primer getUpdates parte de offset = último+1.
+    (bot as unknown as { lastTriedUpdateId: number }).lastTriedUpdateId =
+      checkpoint.offset - 1;
+  }
+
   await bot.start({
     onStart: (me) => console.log(`[gateway] Bot conectado como @${me.username}`),
+  });
+}
+
+/**
+ * Envuelve el handler de updates del bot para marcar el checkpoint
+ * después de cada update procesado (con éxito o con error manejado).
+ */
+export function withCheckpoint(bot: Bot, checkpoint: UpdateCheckpoint): void {
+  bot.use(async (ctx, next) => {
+    await next();
+    // grammY procesa secuencialmente; al salir del middleware el
+    // update ya fue manejado (enqueued o ignorado por bot.catch).
+    checkpoint.mark(ctx.update.update_id);
   });
 }
