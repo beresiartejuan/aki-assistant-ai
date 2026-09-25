@@ -1,0 +1,22 @@
+{
+  "name": "@aki/executor",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Executor: ejecuta las acciones decididas por el núcleo del agente",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"Sin tests aún\" && exit 0",
+    "lint": "echo \"Sin linter aún\" && exit 0"
+  }
+}

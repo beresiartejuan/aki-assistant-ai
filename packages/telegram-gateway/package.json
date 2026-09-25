@@ -1,0 +1,22 @@
+{
+  "name": "@aki/telegram-gateway",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Gateway de Telegram: recibe y envía mensajes, puerta de entrada del agente",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"Sin tests aún\" && exit 0",
+    "lint": "echo \"Sin linter aún\" && exit 0"
+  }
+}
