@@ -1,0 +1,148 @@
+import { config } from "./config.js";
+import type { ResultPayload } from "./types.js";
+import { ip4Dispatcher } from "./http.js";
+
+/**
+ * Entrega de resultados de una tarea al usuario de Telegram:
+ * mensaje de texto (respuesta del modelo) + artifacts como documentos.
+ */
+
+/** Descarga un artifact del executor y lo devuelve como Buffer. */
+async function fetchArtifact(
+  taskId: string,
+  filePath: string,
+): Promise<{ buffer: Buffer; filename: string } | null> {
+  // Defense-in-depth: el path del artifact no debe escapar.
+  const clean = filePath.replace(/^\//, "");
+  if (clean.startsWith("..") || clean.includes("\0")) return null;
+
+  const url = `${config.executorUrl}/artifacts/${encodeURIComponent(taskId)}/${clean
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+
+  try {
+    const { origin, pathname, search } = new URL(url);
+    const res = await ip4Dispatcher.request({
+      origin,
+      path: `${pathname}${search}`,
+      method: "GET",
+    });
+    if (res.statusCode !== 200) return null;
+    const buffer = Buffer.from(await res.body.arrayBuffer());
+    return {
+      buffer,
+      filename: clean.split("/").pop() ?? "artifact",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Envía la respuesta de texto al chat. */
+async function sendText(chatId: string | number, text: string): Promise<void> {
+  const { origin, pathname } = new URL(
+    `https://api.telegram.org/bot${config.botToken}/sendMessage`,
+  );
+  await ip4Dispatcher.request({
+    origin,
+    path: pathname,
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text.slice(0, 4096), // límite de Telegram
+    }),
+  });
+}
+
+/** Envía un archivo como documento con caption. */
+async function sendDocument(
+  chatId: string | number,
+  buffer: Buffer,
+  filename: string,
+  caption?: string,
+): Promise<boolean> {
+  const { origin, pathname } = new URL(
+    `https://api.telegram.org/bot${config.botToken}/sendDocument`,
+  );
+
+  // multipart/form-data a mano (sin dependencias extra).
+  const boundary = `----aki${Date.now()}${Math.random().toString(36).slice(2)}`;
+  const parts: Buffer[] = [];
+
+  const textPart = (name: string, value: string): Buffer =>
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+    );
+
+  parts.push(textPart("chat_id", String(chatId)));
+  if (caption) parts.push(textPart("caption", caption.slice(0, 1024)));
+
+  parts.push(
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="document"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+    ),
+  );
+  parts.push(buffer);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+  const body = Buffer.concat(parts);
+
+  try {
+    const res = await ip4Dispatcher.request({
+      origin,
+      path: pathname,
+      method: "POST",
+      headers: {
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+        "content-length": String(body.length),
+      },
+      body,
+    });
+    await res.body.dump();
+    return res.statusCode === 200;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Entrega un resultado completo: texto + artifacts.
+ *
+ * Es tolerante a fallos: si Telegram falla en un artifact, se sigue
+ * con el resto y el texto se manda igual (si puede).
+ */
+export async function deliverResult(payload: ResultPayload): Promise<void> {
+  // 1. Mensaje de texto con la respuesta del modelo.
+  if (payload.text) {
+    await sendText(payload.chatId, payload.text);
+  }
+
+  // 2. Artifacts como documentos.
+  for (const artifact of payload.artifacts) {
+    if (artifact.size > config.maxArtifactBytes) {
+      await sendText(
+        payload.chatId,
+        `⚠️ El archivo ${artifact.path} (${Math.round(artifact.size / 1024)} KB) supera el límite de Telegram y no pudo enviarse.`,
+      );
+      continue;
+    }
+
+    const file = await fetchArtifact(payload.taskId, artifact.path);
+    if (!file) {
+      await sendText(payload.chatId, `⚠️ No pude recuperar el archivo ${artifact.path}.`);
+      continue;
+    }
+
+    const ok = await sendDocument(
+      payload.chatId,
+      file.buffer,
+      file.filename,
+      `📄 ${artifact.path} — tarea ${payload.taskId.slice(0, 8)}`,
+    );
+    if (!ok) {
+      console.error(`[gateway] Falló el envío de ${artifact.path} a Telegram`);
+    }
+  }
+}

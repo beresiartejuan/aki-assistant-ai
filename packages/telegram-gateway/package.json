@@ -21,7 +21,9 @@
     "lint": "echo \"Sin linter aún\" && exit 0"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.1",
     "grammy": "^1.46.0",
+    "hono": "^4.13.9",
     "undici": "^8.11.2",
     "zod": "^4.6.5"
   },

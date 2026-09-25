@@ -23,3 +23,24 @@ export interface QueuedMessage extends Message {
   /** Cantidad de intentos de envío fallidos hasta ahora. */
   attempts: number;
 }
+
+/** Artifact generado por una tarea (archivo del workspace). */
+export const artifactSchema = z.object({
+  path: z.string().min(1),
+  size: z.number().int().nonnegative(),
+});
+
+/** Payload que agent-core envía al gateway al terminar una tarea. */
+export const resultPayloadSchema = z.object({
+  taskId: z.string().min(1),
+  chatId: z.union([z.string(), z.number()]),
+  /** Respuesta final del modelo (se envía como mensaje de texto). */
+  text: z.string().max(8000),
+  /** Archivos generados, para enviarlos como documentos. */
+  artifacts: z
+    .array(artifactSchema)
+    .max(20)
+    .default([]),
+});
+
+export type ResultPayload = z.infer<typeof resultPayloadSchema>;

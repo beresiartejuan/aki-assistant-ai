@@ -18,6 +18,12 @@ export const config = {
   /** Modelo a usar en el razonamiento del agente. */
   ollamaModel: process.env.OLLAMA_MODEL ?? "nemotron-3-nano:30b",
 
+  /** URL del gateway para notificar resultados (vacío = no notificar). */
+  gatewayUrl: process.env.GATEWAY_URL ?? "http://localhost:3200",
+
+  /** URL del executor para listar artifacts de la tarea. */
+  executorUrl: process.env.EXECUTOR_URL ?? "http://localhost:3100",
+
   /** Puerto del servidor HTTP. */
   port: Number(process.env.PORT) || 3000,
 } as const;

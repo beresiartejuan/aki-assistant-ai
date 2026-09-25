@@ -3,6 +3,7 @@ import { chat, type ChatMessage } from "./ollama.js";
 import { logger } from "./logger.js";
 import { ToolRegistry, ToolExecutor, type ToolResult } from "./tools.js";
 import { buildDefaultTools } from "./builtin-tools.js";
+import { listArtifacts, notifyResult } from "./gateway-notify.js";
 
 /**
  * Estado del agente: "idle" (libre) o "busy" (trabajando en algo).
@@ -162,6 +163,24 @@ export async function handleMessage(message: Message, taskIdOverride?: string): 
       rounds: reply.rounds,
       toolsUsed: reply.toolResults.map((r) => `${r.name}:${r.ok ? "ok" : "error"}`),
     });
+
+    // Notificar al gateway (respuesta + artifacts) si el mensaje tiene
+    // un chatId real (vino de Telegram, no de un test directo).
+    const chatIdStr = String(message.chatId);
+    if (chatIdStr && chatIdStr !== "test") {
+      const artifacts = await listArtifacts(taskId);
+      const delivered = await notifyResult({
+        taskId,
+        chatId: message.chatId,
+        text: reply.content,
+        artifacts,
+      });
+      logger.info("agent-core", `Resultado notificado al gateway`, {
+        taskId,
+        delivered,
+        artifacts: artifacts.length,
+      });
+    }
   } catch (error) {
     logger.taskFail(taskId, error instanceof Error ? error.message : String(error));
     logger.error("agent-core", `Tarea ${taskId} falló`, {

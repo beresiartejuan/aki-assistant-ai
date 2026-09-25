@@ -19,6 +19,15 @@ export const config = {
   /** URL base del servidor HTTP de agent-core. */
   agentCoreUrl: process.env.AGENT_CORE_URL ?? "http://localhost:3000",
 
+  /** URL base del executor (para descargar artifacts). */
+  executorUrl: process.env.EXECUTOR_URL ?? "http://localhost:3100",
+
+  /** Puerto del servidor HTTP del gateway (recibe resultados de agent-core). */
+  port: Number(process.env.GATEWAY_PORT) || 3200,
+
+  /** Tamaño máximo de artifact a enviar por Telegram (50 MB del Bot API). */
+  maxArtifactBytes: 49 * 1024 * 1024,
+
   /** Directorio donde se persiste la cola de mensajes pendientes. */
   dataDir: process.env.GATEWAY_DATA_DIR ?? "data",
 
