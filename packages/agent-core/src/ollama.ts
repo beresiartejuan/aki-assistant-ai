@@ -112,9 +112,17 @@ export async function chat(
     );
   }
 
-  const content = body.message?.content ?? "";
-  if (!content) {
-    throw new OllamaError("Ollama devolvió una respuesta vacía");
+  const message = body.message ?? { role: "assistant", content: "" };
+  const content = message.content ?? "";
+  const toolCalls = message.tool_calls;
+
+  // Los modelos de razonamiento devuelven content: "\n" cuando piden
+  // una tool (el texto real va en `thinking`). Solo es un error si no
+  // hay contenido NI tool_calls.
+  if (!content.trim() && !(toolCalls && toolCalls.length > 0)) {
+    throw new OllamaError(
+      `Ollama devolvió una respuesta vacía (thinking: ${message.thinking?.slice(0, 100) ?? "sin thinking"})`,
+    );
   }
 
   return {
@@ -122,6 +130,6 @@ export async function chat(
     model: body.model,
     promptEvalCount: body.prompt_eval_count,
     evalCount: body.eval_count,
-    toolCalls: body.message?.tool_calls,
+    toolCalls,
   };
 }
