@@ -44,4 +44,12 @@ export const config = {
 
   /** Backoff máximo entre reintentos tras errores de red (ms). */
   maxBackoffMs: Number(process.env.GATEWAY_MAX_BACKOFF_MS) || 30_000,
+
+  /**
+   * Al arrancar, descarta el backlog de updates pendientes: los mensajes
+   * acumulados mientras el gateway estuvo apagado se ignoran y el
+   * checkpoint queda en el último update como si ya hubiera sido
+   * leído/respondido. Desactivar con GATEWAY_SKIP_BACKLOG=false.
+   */
+  skipBacklogOnStart: process.env.GATEWAY_SKIP_BACKLOG !== "false",
 } as const;

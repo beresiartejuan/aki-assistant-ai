@@ -22,6 +22,9 @@ const ip4Agent = new Agent({
   connect: { family: 4, autoSelectFamily: false },
 });
 
+/** URL base de la Bot API de Telegram. */
+const telegramApiUrl = `https://api.telegram.org/bot${config.botToken}`;
+
 /** fetch (Web API) con IPv4 forzado y signal nativo. */
 const fetchIp4 = async (input: Parameters<typeof undiciFetch>[0], init?: Parameters<typeof undiciFetch>[1]) => {
   let nativeSignal: AbortSignal | undefined;
@@ -89,6 +92,48 @@ export class UpdateCheckpoint {
   }
 }
 
+/**
+ * Drena el backlog de updates pendientes al arrancar.
+ *
+ * Cuando el gateway estuvo apagado, Telegram acumula mensajes (ej:
+ * pruebas del usuario). Se piden con getUpdates(timeout=0) en loop,
+ * se marca el último update_id en el checkpoint (Telegram confirma y
+ * descarta esos updates) y no se encolan: el bot arranca desde el
+ * último mensaje como si ya hubiera sido leído/respondido.
+ */
+export async function drainBacklog(checkpoint: UpdateCheckpoint): Promise<number> {
+  let drained = 0;
+  for (;;) {
+    const res = await fetchIp4(`${telegramApiUrl}/getUpdates`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        offset: checkpoint.offset,
+        timeout: 0,
+        limit: 100,
+      }),
+    });
+    const body = (await res.json()) as {
+      ok: boolean;
+      result?: Array<{ update_id: number }>;
+      description?: string;
+    };
+    if (!body.ok || !body.result) {
+      throw new Error(`getUpdates falló: ${body.description ?? res.status}`);
+    }
+    if (body.result.length === 0) break;
+    for (const u of body.result) checkpoint.mark(u.update_id);
+    drained += body.result.length;
+    // Con offset confirmado, la siguiente llamada trae solo lo nuevo.
+    if (body.result.length < 100) break;
+  }
+  await checkpoint.flush();
+  if (drained > 0) {
+    console.log(`[gateway] Backlog descartado: ${drained} update(s) viejos marcados como leídos`);
+  }
+  return drained;
+}
+
 export function createBot(queue: PersistentQueue): Bot {
   if (!config.botToken) {
     throw new Error(
@@ -101,7 +146,7 @@ export function createBot(queue: PersistentQueue): Bot {
       // El fetch custom va al nivel del client (no dentro de baseFetchConfig):
       // grammY usa node-fetch por defecto, que no respeta los dispatchers
       // del fetch global de Node.
-      fetch: fetchIp4 as unknown as (url: string, init?: Record<string, unknown>) => Promise<Response>,
+      fetch: fetchIp4 as never,
       baseFetchConfig: {
         compress: true,
       },

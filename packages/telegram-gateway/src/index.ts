@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { config } from "./config.js";
 import { PersistentQueue } from "./queue.js";
 import { Dispatcher } from "./dispatcher.js";
-import { createBot, startBot, withCheckpoint, UpdateCheckpoint } from "./telegram.js";
+import { createBot, startBot, withCheckpoint, UpdateCheckpoint, drainBacklog } from "./telegram.js";
 import { startResultsServer } from "./server.js";
 import { deliverResult } from "./deliver.js";
 import type { ResultPayload } from "./types.js";
@@ -43,6 +43,17 @@ async function main(): Promise<void> {
 
   const bot = createBot(queue);
   withCheckpoint(bot, checkpoint);
+
+  // Descarta mensajes acumulados mientras el gateway estuvo apagado
+  // (ej: pruebas del usuario): quedan marcados como leídos y no se
+  // encolan ni responden. Desactivable con GATEWAY_SKIP_BACKLOG=false.
+  if (config.skipBacklogOnStart) {
+    try {
+      await drainBacklog(checkpoint);
+    } catch (error) {
+      console.error("[gateway] No se pudo drenar el backlog:", error);
+    }
+  }
 
   const stop = () => {
     dispatcher.stop();
