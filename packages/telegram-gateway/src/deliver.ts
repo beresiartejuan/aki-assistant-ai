@@ -31,6 +31,19 @@ const PACKAGE_ROOT = path.resolve(
   "..",
 );
 
+/**
+ * Sanitiza un filename para uso en multipart/Content-Disposition:
+ * elimina comillas, backslashes, CR/LF/NUL y otros caracteres de
+ * control (el path puede venir del modelo vía deliver_file).
+ */
+export function safeFilename(name: string): string {
+  const clean = name
+    .replace(/[\r\n\0"\\]/g, "")
+    .replace(/[^\x20-\x7E]/g, "")
+    .trim();
+  return clean || "artifact";
+}
+
 /** Descarga un artifact del executor y lo devuelve como Buffer. */
 async function fetchArtifact(
   taskId: string,
@@ -57,7 +70,7 @@ async function fetchArtifact(
     const buffer = Buffer.from(await res.body.arrayBuffer());
     return {
       buffer,
-      filename: clean.split("/").pop() ?? "artifact",
+      filename: safeFilename(clean.split("/").pop() ?? "artifact"),
     };
   } catch {
     return null;
