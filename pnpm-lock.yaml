@@ -36,7 +36,14 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/event-manager: {}
+  packages/event-manager:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/executor:
     dependencies:
