@@ -56,6 +56,38 @@ const DENYLISTED_ARG_PATTERNS = [
 /** Env que se hereda al proceso del comando (mínimo). */
 const ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TERM"];
 
+/**
+ * Intérpretes con ejecución inline (-e/-c/--eval): en modo docker el
+ * aislamiento lo da el contenedor y se permiten; en modo process
+ * corren en el HOST y se rechazan (child_process/os.system).
+ */
+const HOST_UNSAFE_INTERPRETERS = new Set([
+  "node", "python3", "python", "perl", "ruby", "php",
+  "lua", "lua5.4", "lua5.3", "sandbox-shell",
+]);
+
+/**
+ * Chequeo adicional para el modo process (ejecución en host): además
+ * de la denylist, no se permiten intérpretes con ejecución inline ni
+ * comandos con path (solo binarios del PATH).
+ */
+export function assertHostModeAllowed(command: string, args: string[]): void {
+  void args;
+  const bin = command.split("/").pop() ?? command;
+
+  if (HOST_UNSAFE_INTERPRETERS.has(bin)) {
+    throw new SecurityError(
+      `En modo process no se permiten intérpretes con ejecución inline: ${bin}`,
+    );
+  }
+
+  if (command.includes("/")) {
+    throw new SecurityError(
+      "En modo process no se permiten comandos con ruta (solo binarios del PATH)",
+    );
+  }
+}
+
 /** Directorio del workspace de una tarea. */
 export function workspaceDir(taskId: string): string {
   return joinSafe(config.sandboxRoot, taskId);

@@ -4,6 +4,7 @@ import type { CommandRequest, CommandResult } from "./types.js";
 import {
   SecurityError,
   assertCommandAllowed,
+  assertHostModeAllowed,
   resolveInsideWorkspace,
   ensureWorkspace,
   buildEnv,
@@ -16,8 +17,10 @@ import {
  * Dos modos (config.sandboxMode):
  * - "docker": spawn de `docker run` con la imagen del sandbox, workspace
  *   montado como volume y límites de RAM/CPU. Aislamiento real.
- * - "process": ejecución directa en el host con workspace enjaulado y
- *   denylist (fallback de desarrollo, sin Docker).
+ * - "process": ejecución directa en el host con workspace enjaulado,
+ *   denylist y chequeos extra de modo host (sin intérpretes con
+ *   ejecución inline ni comandos con path). Fallback de desarrollo,
+ *   sin Docker.
  *
  * Común: argv directo (sin shell), timeout SIGTERM→SIGKILL, límite de
  * salida, concurrencia limitada (cola simple).
@@ -101,6 +104,7 @@ export class CommandRunner {
   /** Modo process: ejecución directa en el host (fallback de desarrollo). */
   private async runProcess(req: CommandRequest): Promise<CommandResult> {
     assertCommandAllowed(req.command, req.args);
+    assertHostModeAllowed(req.command, req.args);
 
     await ensureWorkspace(req.taskId);
     const cwd = await resolveInsideWorkspace(req.taskId, req.cwd);
