@@ -36,26 +36,52 @@ Agente de inteligencia artificial autónomo asistente que corre en tu propia má
 
 ## Setup rápido
 
-```bash
-# 1. Dependencias
-pnpm install
+### 1. Requisitos e instalación
 
-# 2. Variables de entorno (cada paquete lee su propio .env)
+Necesitás Node.js >= 22.5, pnpm >= 10 y Docker. Cloná el repo e instalá dependencias:
+
+```bash
+git clone https://github.com/beresiartejuan/aki-assistant-ai
+cd aki-assistant-ai
+pnpm install
+```
+
+### 2. Configurar variables de entorno (lo mínimo para que funcione)
+
+Cada paquete lee su propio `.env`. Copiá los ejemplos y completá:
+
+```bash
 cp packages/agent-core/.env.example packages/agent-core/.env
 cp packages/executor/.env.example packages/executor/.env
 cp packages/telegram-gateway/.env.example packages/telegram-gateway/.env
-
-# 3. Completar: OLLAMA_API_KEY en agent-core, TELEGRAM_BOT_TOKEN en gateway,
-#    INTERNAL_API_KEY (mismo valor) en los tres.
-
-# 4. Imagen del sandbox
-docker build -f packages/executor/docker/sandbox.Dockerfile -t aki-sandbox:latest packages/executor/docker/
-
-# 5. Arrancar (en este orden, cada uno en su terminal)
-pnpm --filter @aki/executor dev
-pnpm --filter @aki/agent-core dev
-pnpm --filter @aki/telegram-gateway dev
 ```
+
+Los **valores obligatorios** son 4:
+
+| Archivo `.env` | Variable | Dónde sacarla |
+| --- | --- | --- |
+| `packages/agent-core/.env` | `OLLAMA_API_KEY` | [ollama.com → Settings → Keys](https://ollama.com/settings/keys) |
+| `packages/telegram-gateway/.env` | `TELEGRAM_BOT_TOKEN` | Creá un bot con [@BotFather](https://t.me/BotFather) en Telegram |
+| `packages/telegram-gateway/.env` | `ALLOWED_TELEGRAM_USER_IDS` | Tu id numérico de Telegram (mandale un mensaje a [@userinfobot](https://t.me/userinfobot)) |
+| Los **tres** `.env` | `INTERNAL_API_KEY` | El **mismo** valor en los tres; generá uno con `openssl rand -hex 32` |
+
+Sin `ALLOWED_TELEGRAM_USER_IDS` el bot atiende a cualquiera que lo encuentre (no recomendado: consume tu API key y tu sandbox). Las demás variables tienen defaults razonables — ver [Config](#config-env-vars-por-paquete).
+
+### 3. Construir la imagen del sandbox
+
+```bash
+docker build -f packages/executor/docker/sandbox.Dockerfile -t aki-sandbox:latest packages/executor/docker/
+```
+
+### 4. Arrancar los tres servicios (en este orden, cada uno en su terminal)
+
+```bash
+pnpm --filter @aki/executor dev          # sandbox de ejecución :3100
+pnpm --filter @aki/agent-core dev        # cerebro del agente    :3000
+pnpm --filter @aki/telegram-gateway dev  # bot de Telegram       :3200
+```
+
+Mandale un mensaje al bot por Telegram: el agente responde desde tu propia máquina y te envía los archivos que genere (solo los que él marca con `deliver_file`). La capa semántica de memoria usa Ollama local para embeddings — instalá el modelo con `ollama pull qwen3-embedding:0.6b` (o cambiá `OLLAMA_EMBED_MODEL` en el `.env` de agent-core).
 
 ## Config (env vars por paquete)
 
