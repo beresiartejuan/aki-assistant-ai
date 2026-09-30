@@ -31,4 +31,4 @@ data/
 Thumbs.db
 
 # Cobertura
-coverage/
+coverage/.playwright-mcp/

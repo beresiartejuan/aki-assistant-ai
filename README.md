@@ -2,11 +2,7 @@
 
 Agente de inteligencia artificial autónomo asistente que corre en tu propia máquina: atiende por Telegram, razona con un LLM (Ollama Cloud), y ejecuta acciones reales (comandos, scripts, npm, pip) en un sandbox Docker aislado.
 
-```
-Telegram ←→ telegram-gateway ──POST /messages──> agent-core ──POST /exec──> executor
-                    ▲                                  │                        │
-                    └───────── POST /results ──────────┘          Docker (workspace: /workspace)
-```
+![Diagrama de arquitectura de aki-agent](docs/architecture.png)
 
 ## Monorepo (pnpm workspaces)
 
