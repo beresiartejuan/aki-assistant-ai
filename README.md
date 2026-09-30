@@ -1,160 +1,257 @@
 # aki-agent
 
-Agente de inteligencia artificial autónomo asistente que corre en tu propia máquina: atiende por Telegram, razona con un LLM (Ollama Cloud), y ejecuta acciones reales (comandos, scripts, npm, pip) en un sandbox Docker aislado.
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-10.17.1-f69220?logo=pnpm)](https://pnpm.io/)
+[![Docker](https://img.shields.io/badge/docker-required-2496ED?logo=docker)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> Agente de inteligencia artificial autónomo que corre en tu propia máquina. Atiende por Telegram, razona con un LLM a través de **Ollama Cloud** y ejecuta acciones reales (comandos, scripts, npm, pip) dentro de un **sandbox Docker aislado**.
 
 ![Diagrama de arquitectura de aki-agent](docs/architecture.png)
 
-## Monorepo (pnpm workspaces)
+## Tabla de contenidos
 
-| Paquete | Ruta | Descripción |
+- [Qué es](#qu%C3%A9-es)
+- [Arquitectura](#arquitectura)
+- [Características principales](#caracter%C3%ADsticas-principales)
+- [Requisitos](#requisitos)
+- [Instalación rápida](#instalaci%C3%B3n-r%C3%A1pida)
+- [Configuración](#configuraci%C3%B3n)
+- [Uso](#uso)
+- [Seguridad](#seguridad)
+- [Desarrollo](#desarrollo)
+- [Diagnóstico](#diagn%C3%B3stico)
+- [Licencia](#licencia)
+
+## Qué es
+
+`aki-agent` es un asistente personal de IA modular y autocontenido:
+
+- Recibe mensajes de Telegram.
+- Interpreta la solicitud y decide qué hacer.
+- Ejecuta código, instala dependencias, genera archivos y consulta datos dentro de un sandbox.
+- Responde con texto y, cuando corresponde, entrega archivos directamente en el chat.
+- Aprende entre tareas mediante un sistema de memoria en capas.
+
+Todo corre localmente bajo tu control: el LLM remoto se usa solo para el razonamiento, mientras que la ejecución, los datos y la memoria permanecen en tu equipo.
+
+## Arquitectura
+
+El proyecto es un monorepo organizado con **pnpm workspaces**.
+
+| Paquete | Ruta | Responsabilidad |
 | --- | --- | --- |
-| `@aki/telegram-gateway` | `packages/telegram-gateway` | Bot de Telegram (grammY), cola persistente, checkpoint de updates, entrega de resultados + artifacts |
-| `@aki/agent-core` | `packages/agent-core` | Loop agéntico con Ollama Cloud, sistema de tools propio (sin SDKs), memoria en capas, consolidación de aprendizajes |
-| `@aki/executor` | `packages/executor` | Sandbox de ejecución en Docker (denylist + límites de recursos), artifacts HTTP |
-| `@aki/event-manager` | `packages/event-manager` | Reservado (paquete vacío) — planeado: `@aki/types`, contratos compartidos gateway ↔ agent-core (hoy duplicados a mano) |
+| `@aki/telegram-gateway` | `packages/telegram-gateway` | Bot de Telegram (grammY), cola persistente, checkpoint de updates y entrega de resultados + archivos. |
+| `@aki/agent-core` | `packages/agent-core` | Loop agéntico con Ollama Cloud, sistema de tools propio sin SDKs, memoria en capas y consolidación de aprendizajes. |
+| `@aki/executor` | `packages/executor` | Sandbox de ejecución: Docker endurecido o proceso en host, artifacts vía HTTP. |
+| `@aki/event-manager` | `packages/event-manager` | Reservado para contratos compartidos entre gateway y agent-core (hoy vacío). |
 
-## Características
+Flujo típico:
 
-- **Sistema de tools propio** (`packages/agent-core/src/tools.ts`): sin frameworks de agentes; tools declarativas con schema Zod serializada a JSON Schema para Ollama.
-- **Loop agéntico con continuación automática** (`state.ts`): hasta `AGENT_MAX_TOOL_ROUNDS` por segmento (15), con segmentos de continuación (3); al agotar un segmento se notifica progreso y el agente retoma con un nudge + su scratchpad.
-- **Memoria de largo plazo** con política de autonomía por capa:
-  - **Capa 0** `constitution.md` — reglas base, inyectadas al system prompt; el agente no puede escribirla (arquitectura, no policy).
-  - **Capa 1** scratchpad por tarea (`workspace/.agent/scratchpad.md`), efímero; reinyectado al continuar tras un corte.
-  - **Capa 2** episodios en SQLite `memory.db` — append-only (el store no expone UPDATE/DELETE).
-  - **Capa 3** aprendizajes en LanceDB + embeddings locales (Ollama **local**: default `qwen3-embedding:0.6b`, 1024 dims); el agente solo `propose_memory`; consolidación con dedupe por similitud coseno y TTL (30 días).
-  - **Capa 4** hechos versionados: `facts` + `facts_history` (nunca pisa sin rastro).
-- **Sandbox Docker endurecido**: rootfs read-only, `/tmp` tmpfs noexec/nosuid, sin capabilities extras, límite RAM/PIDs, usuario 1000, denylist de binarios + anti-traversal lógico + verificación realpath (anti-symlink-escape).
-- **Gateway endurecido**: bind loopback, allowlist de usuarios (`ALLOWED_TELEGRAM_USER_IDS`), auth inter-servicios por shared secret (`INTERNAL_API_KEY`, header `x-internal-key`), descarte del backlog al arrancar (drain).
-- **Cola persistente** de mensajes y checkpoint de `update_id` (no reprocesa tras reinicio).
+1. Telegram entrega el mensaje al `telegram-gateway`.
+2. El gateway encola el mensaje y lo envía a `agent-core`.
+3. `agent-core` razona con el modelo y, si es necesario, invoca tools que llaman a `executor`.
+4. Al finalizar, `agent-core` notifica al gateway, que responde al usuario por Telegram.
+
+## Características principales
+
+- **Sistema de tools propio** (`packages/agent-core/src/tools.ts`): definiciones declarativas con schemas Zod, serializadas automáticamente a JSON Schema para Ollama. Sin dependencias de frameworks de agentes.
+- **Loop agéntico con continuación**: hasta `AGENT_MAX_TOOL_ROUNDS` (15) por segmento y hasta `AGENT_MAX_SEGMENTS` (3) de continuación. Si el modelo sigue necesitando tools al agotar un segmento, se notifica progreso al usuario y se retoma automáticamente con el contexto y el scratchpad actualizado.
+- **Memoria en capas**:
+  - **Capa 0** — `constitution.md`: reglas base inyectadas al system prompt (solo lectura para el agente).
+  - **Capa 1** — scratchpad por tarea (`workspace/.agent/scratchpad.md`): notas efímeras que se reinyectan al continuar.
+  - **Capa 2** — episodios en SQLite (`memory.db`): historial append-only de acciones y observaciones.
+  - **Capa 3** — aprendizajes semánticos en LanceDB + embeddings locales (Ollama local, por defecto `qwen3-embedding:0.6b`, 1024 dims): el agente propone, la consolidación decide con dedupe por similitud coseno y TTL de 30 días.
+  - **Capa 4** — hechos versionados: nunca se pisa un valor sin dejar rastro en `facts_history`.
+- **Sandbox Docker endurecido** (`packages/executor`): rootfs read-only, `/tmp` como tmpfs noexec/nosuid, sin capabilities adicionales, límite de RAM/PIDs, usuario no privilegiado (uid 1000), denylist de binarios, anti-traversal léxico y verificación con `realpath` contra symlinks.
+- **Gateway robusto**: bind en loopback, allowlist de usuarios de Telegram, auth inter-servicios por shared secret y descarte opcional del backlog al arrancar.
+- **Cola persistente** de mensajes y checkpoint de `update_id`, para no reprocesar tras reinicio.
 
 ## Requisitos
 
-- Node.js >= 22.5 (usa `node:sqlite` nativo)
-- pnpm >= 10
-- Docker (para el sandbox del executor; hay modo `process` de desarrollo en host)
-- **Ollama Cloud** (API key) para el LLM principal y **Ollama local** para embeddings
+- **Node.js** >= 22.5 (usa `node:sqlite` nativo)
+- **pnpm** >= 10.17.1
+- **Docker** (para ejecutar el sandbox en modo recomendado)
+- Cuenta en [Ollama Cloud](https://ollama.com) con una API key
+- **Ollama local** para embeddings (modelo por defecto: `qwen3-embedding:0.6b`)
+- Un bot de Telegram creado con [@BotFather](https://t.me/BotFather)
 
-## Setup rápido
-
-### 1. Requisitos e instalación
-
-Necesitás Node.js >= 22.5, pnpm >= 10 y Docker. Cloná el repo e instalá dependencias:
+## Instalación rápida
 
 ```bash
-git clone https://github.com/beresiartejuan/aki-assistant-ai
+git clone https://github.com/beresiartejuan/aki-assistant-ai.git
 cd aki-assistant-ai
 pnpm install
 ```
 
-### 2. Configurar variables de entorno (lo mínimo para que funcione)
+### 1. Crear los archivos de entorno
 
-Cada paquete lee su propio `.env`. Copiá los ejemplos y completá:
+Cada paquete carga su propio `.env` desde su directorio de trabajo. Creá los tres archivos con las variables que se detallan más abajo:
 
 ```bash
-cp packages/agent-core/.env.example packages/agent-core/.env
-cp packages/executor/.env.example packages/executor/.env
-cp packages/telegram-gateway/.env.example packages/telegram-gateway/.env
+touch packages/agent-core/.env
+touch packages/executor/.env
+touch packages/telegram-gateway/.env
 ```
 
-Los **valores obligatorios** son 4:
+Las **cuatro variables imprescindibles** son:
 
-| Archivo `.env` | Variable | Dónde sacarla |
+| Variable | Archivo `.env` | Cómo obtenerla |
 | --- | --- | --- |
-| `packages/agent-core/.env` | `OLLAMA_API_KEY` | [ollama.com → Settings → Keys](https://ollama.com/settings/keys) |
-| `packages/telegram-gateway/.env` | `TELEGRAM_BOT_TOKEN` | Creá un bot con [@BotFather](https://t.me/BotFather) en Telegram |
-| `packages/telegram-gateway/.env` | `ALLOWED_TELEGRAM_USER_IDS` | Tu id numérico de Telegram (mandale un mensaje a [@userinfobot](https://t.me/userinfobot)) |
-| Los **tres** `.env` | `INTERNAL_API_KEY` | El **mismo** valor en los tres; generá uno con `openssl rand -hex 32` |
+| `OLLAMA_API_KEY` | `packages/agent-core/.env` | [ollama.com → Settings → Keys](https://ollama.com/settings/keys) |
+| `TELEGRAM_BOT_TOKEN` | `packages/telegram-gateway/.env` | @BotFather en Telegram |
+| `ALLOWED_TELEGRAM_USER_IDS` | `packages/telegram-gateway/.env` | Tu id numérico de Telegram ([@userinfobot](https://t.me/userinfobot)) |
+| `INTERNAL_API_KEY` | **los tres** `.env` | Generar una sola vez, por ejemplo: `openssl rand -hex 32` |
 
-Sin `ALLOWED_TELEGRAM_USER_IDS` el bot atiende a cualquiera que lo encuentre (no recomendado: consume tu API key y tu sandbox). Las demás variables tienen defaults razonables — ver [Config](#config-env-vars-por-paquete).
+> ⚠️ Si no definís `ALLOWED_TELEGRAM_USER_IDS`, el bot aceptará mensajes de cualquier usuario. En producción siempre configurá la allowlist.
 
-### 3. Construir la imagen del sandbox
+### 2. Construir la imagen del sandbox
 
 ```bash
 docker build -f packages/executor/docker/sandbox.Dockerfile -t aki-sandbox:latest packages/executor/docker/
 ```
 
-### 4. Arrancar los tres servicios (en este orden, cada uno en su terminal)
+### 3. Descargar el modelo de embeddings local
 
 ```bash
-pnpm --filter @aki/executor dev          # sandbox de ejecución :3100
-pnpm --filter @aki/agent-core dev        # cerebro del agente    :3000
-pnpm --filter @aki/telegram-gateway dev  # bot de Telegram       :3200
+ollama pull qwen3-embedding:0.6b
 ```
 
-Mandale un mensaje al bot por Telegram: el agente responde desde tu propia máquina y te envía los archivos que genere (solo los que él marca con `deliver_file`). La capa semántica de memoria usa Ollama local para embeddings — instalá el modelo con `ollama pull qwen3-embedding:0.6b` (o cambiá `OLLAMA_EMBED_MODEL` en el `.env` de agent-core).
+### 4. Levantar los servicios
 
-## Config (env vars por paquete)
+En tres terminales separadas, en este orden:
 
-### packages/agent-core/.env
+```bash
+# Terminal 1 — sandbox de ejecución (puerto 3100)
+pnpm --filter @aki/executor dev
 
-| Variable | Default | Descripción |
-| --- | --- | --- |
-| `OLLAMA_API_KEY` | (obligatoria) | API key de Ollama Cloud |
-| `OLLAMA_BASE_URL` | `https://ollama.com` | Endpoint de la API de chat |
-| `OLLAMA_MODEL` | `nemotron-3-nano:30b` | Modelo principal |
-| `GATEWAY_URL` | `http://localhost:3200` | Gateway (para POST /results) |
-| `EXECUTOR_URL` | `http://localhost:3100` | Executor (tools shell/run_command) |
-| `AGENT_MAX_TOOL_ROUNDS` | `15` | Rondas por segmento del loop |
-| `AGENT_MAX_SEGMENTS` | `3` | Segmentos de continuación |
-| `OLLAMA_LOCAL_URL` | `http://127.0.0.1:11434` | Ollama local (embeddings) |
-| `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | Modelo de embeddings |
-| `OLLAMA_EMBED_DIM` | `1024` | Dimensión del modelo de embeddings |
-| `MEMORY_TTL_DAYS` | `30` | TTL de aprendizajes |
-| `MEMORY_EPISODES_IN_CONTEXT` | `8` | Episodios previos inyectados al prompt |
-| `MEMORY_SEMANTIC_TOP_K` | `5` | Top-K semántico inyectado |
-| `MEMORY_FACTS_IN_CONTEXT` | `30` | Máximo de hechos inyectados |
-| `BIND_HOST` | `127.0.0.1` | Interfaz HTTP de bind |
-| `INTERNAL_API_KEY` | (vacío) | Secret compartido inter-servicios |
+# Terminal 2 — cerebro del agente (puerto 3000)
+pnpm --filter @aki/agent-core dev
 
-### packages/executor/.env
+# Terminal 3 — gateway de Telegram (puerto 3200)
+pnpm --filter @aki/telegram-gateway dev
+```
+
+Ahora podés escribirle al bot por Telegram y el agente responderá desde tu máquina.
+
+## Configuración
+
+A continuación se listan las variables de entorno disponibles por paquete. Los valores marcados con *(obligatorio)* deben configurarse para que el sistema funcione correctamente.
+
+### `packages/agent-core/.env`
 
 | Variable | Default | Descripción |
 | --- | --- | --- |
-| `EXECUTOR_SANDBOX_MODE` | `docker` | `docker` o `process` (host, dev) |
-| `EXECUTOR_DATA_DIR` | `data/sandbox` | Root de workspaces por tarea |
-| `EXECUTOR_SANDBOX_IMAGE` | `aki-sandbox:latest` | Imagen del sandbox |
-| `EXECUTOR_NETWORK_MODE` | `bridge` | Red del contenedor: `none`/`bridge`/`host` |
-| `EXECUTOR_CONTAINER_MEMORY` | 2GB | RAM por contenedor |
-| `EXECUTOR_MAX_TIMEOUT_MS` | 120000 | Timeout máximo por comando |
-| `EXECUTOR_MAX_OUTPUT_CHARS` | 10000 | stdout+stderr devueltos |
-| `BIND_HOST` | `127.0.0.1` | Interfaz HTTP de bind |
-| `INTERNAL_API_KEY` | (vacío) | Secret compartido |
+| `OLLAMA_API_KEY` | *(obligatorio)* | API key de Ollama Cloud. |
+| `OLLAMA_BASE_URL` | `https://ollama.com` | Endpoint de la API de chat. |
+| `OLLAMA_MODEL` | `nemotron-3-nano:30b` | Modelo principal de razonamiento. |
+| `GATEWAY_URL` | `http://localhost:3200` | URL del gateway para notificar resultados. |
+| `EXECUTOR_URL` | `http://localhost:3100` | URL del executor para ejecutar tools. |
+| `AGENT_MAX_TOOL_ROUNDS` | `15` | Rondas máximas modelo↔tools por segmento. |
+| `AGENT_MAX_SEGMENTS` | `3` | Segmentos de continuación automática. |
+| `OLLAMA_LOCAL_URL` | `http://127.0.0.1:11434` | Ollama local para embeddings. |
+| `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | Modelo de embeddings local. |
+| `OLLAMA_EMBED_DIM` | `1024` | Dimensión de los vectores de embeddings. |
+| `MEMORY_TTL_DAYS` | `30` | TTL de aprendizajes semánticos. |
+| `MEMORY_EPISODES_IN_CONTEXT` | `8` | Episodios previos inyectados al prompt. |
+| `MEMORY_SEMANTIC_TOP_K` | `5` | Aprendizajes semánticos más relevantes inyectados. |
+| `MEMORY_FACTS_IN_CONTEXT` | `30` | Máximo de hechos inyectados al prompt. |
+| `BIND_HOST` | `127.0.0.1` | Interfaz de bind del servidor HTTP. |
+| `INTERNAL_API_KEY` | *(vacío)* | Shared secret para auth entre servicios. |
 
-### packages/telegram-gateway/.env
+### `packages/executor/.env`
 
 | Variable | Default | Descripción |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | (obligatorio) | Token de @BotFather |
-| `AGENT_CORE_URL` | `http://localhost:3000` | agent-core |
-| `EXECUTOR_URL` | `http://localhost:3100` | Executor (descarga artifacts) |
-| `GATEWAY_PORT` | `3200` | Puerto del results server |
-| `GATEWAY_SKIP_BACKLOG` | `true` | Descarta mensajes acumulados al arrancar |
-| `ALLOWED_TELEGRAM_USER_IDS` | (obligatorio en prod) | Ids Telegram permitidos (coma) |
-| `BIND_HOST` / `INTERNAL_API_KEY` | — | Idem a los otros servicios |
+| `EXECUTOR_SANDBOX_MODE` | `docker` | `docker` (recomendado) o `process` (host, solo desarrollo). |
+| `EXECUTOR_DATA_DIR` | `data/sandbox` | Directorio raíz de workspaces por tarea. |
+| `EXECUTOR_SANDBOX_IMAGE` | `aki-sandbox:latest` | Imagen Docker del sandbox. |
+| `EXECUTOR_NETWORK_MODE` | `bridge` | Modo de red del contenedor: `none`, `bridge` o `host`. |
+| `EXECUTOR_CONTAINER_MEMORY` | `2GB` | Límite de RAM por contenedor. |
+| `EXECUTOR_CONTAINER_CPUS` | `0` | Límite de CPUs (0 = sin límite). |
+| `EXECUTOR_DEFAULT_TIMEOUT_MS` | `15000` | Timeout por defecto de un comando. |
+| `EXECUTOR_MAX_TIMEOUT_MS` | `120000` | Timeout máximo permitido por request. |
+| `EXECUTOR_MAX_OUTPUT_CHARS` | `10000` | Máximo de caracteres de stdout+stderr devueltos. |
+| `EXECUTOR_MAX_CONCURRENT` | `4` | Máximo de comandos simultáneos. |
+| `BIND_HOST` | `127.0.0.1` | Interfaz de bind del servidor HTTP. |
+| `INTERNAL_API_KEY` | *(vacío)* | Shared secret para auth entre servicios. |
 
-## Seguridad — modelo de amenaza
+### `packages/telegram-gateway/.env`
 
-- Los tres servicios HTTP **bindean a loopback** y se autentican entre sí por shared secret (`x-internal-key`, generable con `openssl rand -hex 32`); los `/status` quedan abiertos para health-checks.
-- El executor valida con **denylist de binarios + anti-traversal léxico + realpath** (anti-symlink) y rechaza symlinks al escribir.
-- En modo `docker`: rootfs read-only, `/tmp` tmpfs noexec/nosuid, sin capabilities (sin ICMP crudo), límites RAM/PIDs, uid no privilegiado. En modo `process` (dev, inseguro): sin intérpretes inline ni comandos con path.
-- El bot tiene **allowlist de usuarios**; desconocidos se ignoran con log.
-- Toda la memoria del agente (episodios, aprendizajes, hechos) vive **fuera del sandbox**, inaccesible al agente por diseño.
+| Variable | Default | Descripción |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | *(obligatorio)* | Token de @BotFather. |
+| `AGENT_CORE_URL` | `http://localhost:3000` | URL del servidor HTTP de agent-core. |
+| `EXECUTOR_URL` | `http://localhost:3100` | URL del executor (descarga de artifacts). |
+| `GATEWAY_PORT` | `3200` | Puerto del servidor de resultados. |
+| `GATEWAY_SKIP_BACKLOG` | `true` | Descarta mensajes acumulados al arrancar. |
+| `ALLOWED_TELEGRAM_USER_IDS` | *(vacío)* | IDs de Telegram permitidos, separados por coma. |
+| `GATEWAY_DATA_DIR` | `data` | Directorio de persistencia de la cola y checkpoint. |
+| `GATEWAY_DISPATCH_POLL_MS` | `1000` | Intervalo de sondeo del dispatcher. |
+| `GATEWAY_MAX_BACKOFF_MS` | `30000` | Backoff máximo entre reintentos. |
+| `GATEWAY_ARTIFACTS_DIR` | `../executor/data/sandbox` | Base de workspaces del executor (para mensajes con ruta local). |
+| `BIND_HOST` | `127.0.0.1` | Interfaz de bind del servidor HTTP. |
+| `INTERNAL_API_KEY` | *(vacío)* | Shared secret para auth entre servicios. |
+
+## Uso
+
+Mandá un mensaje de texto a tu bot por Telegram. Algunos ejemplos de lo que puede hacer:
+
+- Responder preguntas generales usando el modelo de razonamiento.
+- Ejecutar scripts de Node.js o Python en el sandbox.
+- Instalar paquetes npm/pip dentro del workspace de una tarea.
+- Generar archivos (informes, imágenes, CSVs, etc.) y entregarlos por Telegram.
+- Recordar preferencias y hechos entre conversaciones usando la memoria en capas.
+
+Para que un archivo generado llegue al chat, el agente debe marcarlo explícitamente con la tool `deliver_file`. Los archivos de trabajo interno no se envían por defecto.
+
+## Seguridad
+
+- **Comunicación interna**: los tres servicios HTTP bindean a `127.0.0.1` por defecto y se autentican entre sí mediante `INTERNAL_API_KEY` (header `x-internal-key`). Los endpoints `GET /status` permanecen abiertos para health-checks.
+- **Allowlist de usuarios**: el gateway solo procesa mensajes de los IDs de Telegram configurados. Los mensajes de usuarios desconocidos se ignoran y se registran en el log.
+- **Sandbox aislado** (modo `docker`):
+  - rootfs read-only,
+  - `/tmp` como tmpfs `noexec,nosuid`,
+  - `--cap-drop ALL`,
+  - límite de RAM y PIDs,
+  - usuario no privilegiado (uid 1000),
+  - denylists de binarios y argumentos,
+  - anti-traversal léxico + validación `realpath` para evitar escapes por symlink.
+- **Modo `process`**: ejecución directa en el host, pensada solo para desarrollo sin Docker. En este modo se aplican restricciones adicionales: no se permiten intérpretes con ejecución inline ni comandos con ruta absoluta.
+- **Memoria fuera del sandbox**: episodios, aprendizajes y hechos viven en SQLite/LanceDB del host, inaccesibles desde el sandbox por diseño.
+
+> Si vas a exponer el agente más allá de tu máquina local, colocá los servicios detrás de un proxy o VPN y configurá `INTERNAL_API_KEY` obligatorio en los tres paquetes.
+
+## Desarrollo
+
+Verificá tipos y compilación de todo el monorepo:
+
+```bash
+pnpm typecheck
+pnpm build
+```
+
+El repositorio todavía no incluye una suite de tests automatizados; los flujos se validan con pruebas manuales end-to-end.
+
+La CI (`./.github/workflows/ci.yml`) ejecuta `pnpm install --frozen-lockfile`, `pnpm typecheck` y `pnpm build` sobre Node.js 24.
+
+### Estructura del código
+
+- `packages/agent-core/src/state.ts` — loop agéntico y orquestación de tareas.
+- `packages/agent-core/src/tools.ts` — registro y ejecución de tools.
+- `packages/agent-core/src/builtin-tools.ts` — tools integradas (`run_command`, `shell`, `deliver_file`, memoria, etc.).
+- `packages/agent-core/src/memory*.ts` + `semantic.ts` + `consolidate.ts` — capas de memoria.
+- `packages/executor/src/security.ts` + `runner.ts` — sandbox y ejecución de comandos.
+- `packages/telegram-gateway/src/telegram.ts` + `dispatcher.ts` + `queue.ts` — bot, cola y entrega de resultados.
 
 ## Diagnóstico
 
-- `packages/agent-core/data/logs.db` (SQLite): tablas `logs` y `tasks` (estado, tokens, rounds por tarea).
-- `packages/agent-core/data/memory.db`: `episodes`, `facts`, `facts_history`, `memory_candidates`.
-- Logs a stdout de cada servicio (`pnpm --filter @aki/<pkg> dev`).
+Cada servicio escribe logs a stdout. Además, `agent-core` mantiene dos bases SQLite bajo `packages/agent-core/data/`:
 
-## Tests
+- `logs.db` — tablas `logs` y `tasks` con estado, tokens y rondas por tarea.
+- `memory.db` — tablas `episodes`, `facts`, `facts_history` y `memory_candidates`.
 
-```bash
-pnpm typecheck   # types de todo el monorepo
-pnpm build
-# CI: .github/workflows/ci.yml (typecheck + build en Node 24)
-```
-
-(Aún sin suite de tests automatizados; los flujos están verificados con pruebas manuales e2e documentadas en los commits.)
+Los workspaces de cada tarea se encuentran en `packages/executor/data/sandbox/<taskId>/`.
 
 ## Licencia
 
