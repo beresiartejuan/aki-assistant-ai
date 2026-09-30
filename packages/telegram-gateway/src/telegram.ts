@@ -134,6 +134,16 @@ export async function drainBacklog(checkpoint: UpdateCheckpoint): Promise<number
   return drained;
 }
 
+/**
+ * Decisión de permit: true solo si el id está en la allowlist
+ * (o si la lista está vacía, modo desarrollo inseguro que acepta todo).
+ * Exportada para poder testear la decisión de forma aislada.
+ */
+export function isUserAllowed(fromId: string): boolean {
+  if (config.allowedUserIds.length === 0) return true;
+  return config.allowedUserIds.includes(fromId);
+}
+
 export function createBot(queue: PersistentQueue): Bot {
   if (!config.botToken) {
     throw new Error(
@@ -176,7 +186,16 @@ export function createBot(queue: PersistentQueue): Bot {
     console.log(`[gateway] Mensaje encolado de chat ${message.chatId}`);
   }
 
-  bot.on("message:text", (ctx) => enqueue(ctx));
+  bot.on("message:text", (ctx) => {
+    const fromId = String(ctx.msg.from?.id ?? "");
+    if (!isUserAllowed(fromId)) {
+      console.warn(
+        `[gateway] Mensaje RECHAZADO de usuario no permitido: id=${fromId} username=${ctx.msg.from?.username ?? "?"}`,
+      );
+      return; // silencioso: no responder a desconocidos
+    }
+    return enqueue(ctx);
+  });
 
   bot.catch((err) => {
     console.error(`[gateway] Error procesando update ${err.ctx.update?.update_id}:`, err.error);

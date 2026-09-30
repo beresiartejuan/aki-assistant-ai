@@ -16,6 +16,14 @@ export const config = {
   /** Token del bot de Telegram. */
   botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
 
+  /**
+   * Allowlist de usuarios de Telegram (ids numéricos, separados por coma).
+   * Vacío = SOLO desarrollo inseguro: acepta todo (comportamiento actual).
+   * Con al menos un id, cualquier mensaje de otro usuario se ignora y se
+   * registra en el log con su id para poder permitirlo después.
+   */
+  allowedUserIds: (process.env.ALLOWED_TELEGRAM_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean) as string[],
+
   /** URL base del servidor HTTP de agent-core. */
   agentCoreUrl: process.env.AGENT_CORE_URL ?? "http://localhost:3000",
 
