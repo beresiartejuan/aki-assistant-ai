@@ -219,9 +219,14 @@ export interface DockerRunOptions {
  * - `--network <mode>`: none (sin red) o bridge/host según config.
  * - `--memory` + `--memory-swap`: límite duro de RAM (sin swap extra).
  * - `--pids-limit`: anti fork-bomb.
- * - `--cap-drop ALL`: sin capabilities del kernel.
+ * - `--cap-drop ALL`: sin capabilities, rootfs read-only. Sin raw sockets
+ *   (TCP/UDP siguen); ping (ICMP crudo) deja de funcionar.
+ * - `--read-only`: rootfs inmutable, el sandbox no puede alterar los
+ *   binarios de la imagen. Escrituras temporales van a /tmp (tmpfs).
+ * - `--tmpfs /tmp`: tmpfs rw,noexec,nosuid para archivos temporales.
  * - `--security-opt no-new-privileges`: sin escalada de privilegios.
- * - `-v hostWorkspace:/workspace`: workspace de la tarea.
+ * - `-v hostWorkspace:/workspace`: workspace de la tarea (rw: npm
+ *   install, archivos generados).
  * - `-w /workspace[/subdir]`: cwd dentro del workspace.
  * - `--user 1000:1000`: uid no privilegiado (coincide con el host).
  * - `--env`: solo las variables del env mínimo.
@@ -240,8 +245,11 @@ export function dockerArgsFor(options: DockerRunOptions): string[] {
     "128",
     "--cap-drop",
     "ALL",
-    "--cap-add",
-    "NET_RAW", // ping y similares (ICMP crudo); sin escalada de privilegios
+    // Rootfs read-only: el sandbox no puede alterar binarios de la imagen.
+    "--read-only",
+    // /tmp con tmpfs (rw,noexec,nosuid): único lugar temporal escribible.
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=64m",
     "--security-opt",
     "no-new-privileges",
     "--volume",
