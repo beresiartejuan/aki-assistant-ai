@@ -1,4 +1,5 @@
 import { Agent, type Dispatcher } from "undici";
+import { internalAuthHeaders } from "./auth.js";
 
 /**
  * Dispatcher HTTP que fuerza IPv4 en todas las conexiones.
@@ -28,7 +29,7 @@ export async function postJson(
     origin,
     path: pathname,
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...internalAuthHeaders() },
     body: JSON.stringify(body),
   });
 

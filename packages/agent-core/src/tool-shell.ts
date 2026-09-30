@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Agent, type Dispatcher } from "undici";
+import { internalAuthHeaders } from "./auth.js";
 
 /**
  * Tool shell: ejecuta comandos de shell en el sandbox del executor.
@@ -72,7 +73,10 @@ export const shell = {
       origin,
       path: pathname,
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...internalAuthHeaders(),
+      },
       body: JSON.stringify({
         taskId: ctx.taskId,
         // El executor solo acepta binarios fuera de la denylist; el modo

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Agent, type Dispatcher } from "undici";
+import { internalAuthHeaders } from "./auth.js";
 
 /**
  * Tool run_command: delega la ejecución al servicio executor.
@@ -61,7 +62,10 @@ export const runCommand = {
       origin,
       path: pathname,
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...internalAuthHeaders(),
+      },
       body: JSON.stringify({
         taskId: ctx.taskId,
         command: args.command,

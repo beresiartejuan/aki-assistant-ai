@@ -38,6 +38,12 @@ export const config = {
   /** Puerto del servidor HTTP. */
   port: Number(process.env.PORT) || 3000,
 
+  /**
+   * Interfaz de red del servidor HTTP. Loopback por defecto; solo
+   * cambiar si los servicios corren en hosts separados.
+   */
+  bindHost: process.env.BIND_HOST ?? "127.0.0.1",
+
   // ── Memoria (capas 1-4) ──────────────────────────────────────────────
 
   /** URL de Ollama LOCAL para embeddings de la capa semántica. */

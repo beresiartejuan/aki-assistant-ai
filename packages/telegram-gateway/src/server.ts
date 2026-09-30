@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { config } from "./config.js";
 import { resultPayloadSchema, type ResultPayload } from "./types.js";
+import { requireInternalKey } from "./auth.js";
 
 /**
  * Servidor HTTP del gateway.
@@ -14,6 +15,11 @@ export function createResultsApp(
   onResult: (payload: ResultPayload) => void,
 ): Hono {
   const app = new Hono();
+
+  // Auth inter-servicios: exige el shared secret (x-internal-key) si
+  // INTERNAL_API_KEY está configurado. GET /status queda libre para
+  // health-checks.
+  app.use("/results", requireInternalKey());
 
   app.post("/results", async (c) => {
     const raw = await c.req.json().catch(() => null);
@@ -46,7 +52,7 @@ export function startResultsServer(
   onResult: (payload: ResultPayload) => void,
   port = config.port,
 ) {
-  const server = serve({ fetch: createResultsApp(onResult).fetch, port });
-  console.log(`[gateway] Servidor de resultados escuchando en http://localhost:${port}`);
+  const server = serve({ fetch: createResultsApp(onResult).fetch, port, hostname: config.bindHost });
+  console.log(`[gateway] Servidor de resultados escuchando en http://${config.bindHost}:${port}`);
   return server;
 }

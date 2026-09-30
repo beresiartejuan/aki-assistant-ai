@@ -5,6 +5,7 @@
  */
 import { Agent } from "undici";
 import { config } from "./config.js";
+import { internalAuthHeaders } from "./auth.js";
 
 /** Dispatcher IPv4 (mismo fix que ollama.ts). */
 const dispatcher: Agent = new Agent({
@@ -21,7 +22,7 @@ export async function writeSandboxFile(taskId: string, path: string, content: st
     origin: config.executorUrl,
     path: `/files/${encodeURIComponent(taskId)}/${encoded}`,
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...internalAuthHeaders() },
     body: JSON.stringify({ content }),
   });
   if (res.statusCode !== 200) {
@@ -41,6 +42,7 @@ export async function readSandboxFile(taskId: string, path: string): Promise<{ c
     origin: config.executorUrl,
     path: `/files/${encodeURIComponent(taskId)}/${encoded}`,
     method: "GET",
+    headers: internalAuthHeaders(),
   });
   if (res.statusCode === 404) return null;
   if (res.statusCode !== 200) {

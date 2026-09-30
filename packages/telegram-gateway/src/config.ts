@@ -33,6 +33,12 @@ export const config = {
   /** Puerto del servidor HTTP del gateway (recibe resultados de agent-core). */
   port: Number(process.env.GATEWAY_PORT) || 3200,
 
+  /**
+   * Interfaz de red del servidor HTTP. Loopback por defecto; solo
+   * cambiar si los servicios corren en hosts separados.
+   */
+  bindHost: process.env.BIND_HOST ?? "127.0.0.1",
+
   /** Tamaño máximo de artifact a enviar por Telegram (50 MB del Bot API). */
   maxArtifactBytes: 49 * 1024 * 1024,
 

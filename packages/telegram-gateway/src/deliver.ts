@@ -2,6 +2,7 @@ import path from "node:path";
 import { config } from "./config.js";
 import type { ResultPayload } from "./types.js";
 import { ip4Dispatcher } from "./http.js";
+import { internalAuthHeaders } from "./auth.js";
 
 /**
  * Entrega de resultados de una tarea al usuario de Telegram:
@@ -50,6 +51,7 @@ async function fetchArtifact(
       origin,
       path: `${pathname}${search}`,
       method: "GET",
+      headers: internalAuthHeaders(),
     });
     if (res.statusCode !== 200) return null;
     const buffer = Buffer.from(await res.body.arrayBuffer());

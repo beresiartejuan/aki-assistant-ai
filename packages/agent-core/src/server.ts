@@ -5,8 +5,15 @@ import { messageSchema } from "./types.js";
 import { agentState, handleMessage } from "./state.js";
 import { logger } from "./logger.js";
 import { memory } from "./memory.js";
+import { config } from "./config.js";
+import { requireInternalKey } from "./auth.js";
 
 const app = new Hono();
+
+// Auth inter-servicios: exige el shared secret (x-internal-key) si
+// INTERNAL_API_KEY está configurado. GET /status queda libre para
+// health-checks.
+app.use("/messages", requireInternalKey());
 
 /**
  * GET /status
@@ -89,8 +96,8 @@ app.onError((error, c) => {
 export function startServer(port = Number(process.env.PORT) || 3000) {
   logger.init();
   memory.init();
-  logger.info("http", `Servidor HTTP escuchando en http://localhost:${port}`);
-  const server = serve({ fetch: app.fetch, port });
+  logger.info("http", `Servidor HTTP escuchando en http://${config.bindHost}:${port}`);
+  const server = serve({ fetch: app.fetch, port, hostname: config.bindHost });
 
   // Cierre graceful: liberar la BD de logs.
   const close = () => {

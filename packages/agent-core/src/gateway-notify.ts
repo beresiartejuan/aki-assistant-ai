@@ -1,6 +1,7 @@
 import { Agent, type Dispatcher } from "undici";
 import { z } from "zod";
 import { config } from "./config.js";
+import { internalAuthHeaders } from "./auth.js";
 
 /**
  * Notificación de resultados al gateway de Telegram.
@@ -43,7 +44,12 @@ const artifactsResponseSchema = z.object({
 export async function listArtifacts(taskId: string): Promise<ArtifactInfo[]> {
   try {
     const { origin, pathname } = new URL(`${config.executorUrl}/artifacts/${taskId}`);
-    const res = await dispatcher.request({ origin, path: pathname, method: "GET" });
+    const res = await dispatcher.request({
+      origin,
+      path: pathname,
+      method: "GET",
+      headers: internalAuthHeaders(),
+    });
     if (res.statusCode !== 200) return [];
 
     const body = artifactsResponseSchema.safeParse(await res.body.json());
@@ -64,7 +70,7 @@ export async function notifyResult(payload: ResultPayload): Promise<boolean> {
       origin,
       path: pathname,
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...internalAuthHeaders() },
       body: JSON.stringify(payload),
     });
     await res.body.dump();

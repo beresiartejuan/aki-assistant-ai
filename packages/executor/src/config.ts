@@ -33,6 +33,12 @@ export const config = {
    */
   sandboxRoot: process.env.EXECUTOR_DATA_DIR ?? "data/sandbox",
 
+  /**
+   * Interfaz de red del servidor HTTP. Loopback por defecto; solo
+   * cambiar si los servicios corren en hosts separados.
+   */
+  bindHost: process.env.BIND_HOST ?? "127.0.0.1",
+
   /** Imagen Docker del sandbox. */
   sandboxImage: process.env.EXECUTOR_SANDBOX_IMAGE ?? "aki-sandbox:latest",
 

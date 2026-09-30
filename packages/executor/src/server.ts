@@ -6,9 +6,17 @@ import { config } from "./config.js";
 import { commandRequestSchema } from "./types.js";
 import { CommandRunner } from "./runner.js";
 import { SecurityError, workspaceDir } from "./security.js";
+import { requireInternalKey } from "./auth.js";
 
 const app = new Hono();
 const runner = new CommandRunner();
+
+// Auth inter-servicios: exigen el shared secret (x-internal-key) si
+// INTERNAL_API_KEY está configurado. GET /status queda libre para
+// health-checks.
+app.use("/exec", requireInternalKey());
+app.use("/files/*", requireInternalKey());
+app.use("/artifacts/*", requireInternalKey());
 
 /** MIME types mínimos para servir artifacts. */
 const MIME_TYPES: Record<string, string> = {
@@ -253,8 +261,8 @@ app.onError((error, c) => {
 });
 
 export function startServer(port = config.port) {
-  console.log(`[executor] Servidor HTTP escuchando en http://localhost:${port}`);
-  const server = serve({ fetch: app.fetch, port });
+  console.log(`[executor] Servidor HTTP escuchando en http://${config.bindHost}:${port}`);
+  const server = serve({ fetch: app.fetch, port, hostname: config.bindHost });
 
   const close = () => {
     console.log("[executor] Cerrando servidor");
