@@ -1,11 +1,11 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute } from "node:path";
 import { config } from "./config.js";
 import { commandRequestSchema } from "./types.js";
 import { CommandRunner } from "./runner.js";
-import { SecurityError, workspaceDir } from "./security.js";
+import { SecurityError, assertRealPathInside, workspaceDir } from "./security.js";
 import { requireInternalKey } from "./auth.js";
 
 const app = new Hono();
@@ -54,9 +54,10 @@ function extname(p: string): string {
 
 /**
  * Resuelve un path relativo dentro del workspace de la tarea.
- * Lanza SecurityError si escapa (traversal).
+ * Lanza SecurityError si escapa (traversal) o si en el filesystem REAL
+ * (tras atravesar symlinks) la ruta resuelve fuera del workspace.
  */
-function resolveArtifactPath(taskId: string, filePath: string): string {
+async function resolveArtifactPath(taskId: string, filePath: string): Promise<string> {
   if (filePath.includes("\0")) {
     throw new SecurityError("Ruta inválida");
   }
@@ -68,6 +69,7 @@ function resolveArtifactPath(taskId: string, filePath: string): string {
   if (rel.startsWith("..") || isAbsolute(rel) || rel === "") {
     throw new SecurityError(`Ruta fuera del workspace: ${filePath}`);
   }
+  await assertRealPathInside(workspace, resolved);
   return resolved;
 }
 
@@ -118,7 +120,7 @@ app.get("/artifacts/:taskId/:path{.+}", async (c) => {
   }
 
   try {
-    const full = resolveArtifactPath(taskId, filePath);
+    const full = await resolveArtifactPath(taskId, filePath);
     const content = await readFile(full);
     return c.body(
       new Uint8Array(content),
@@ -168,7 +170,12 @@ app.post("/files/:taskId/:path{.+}", async (c) => {
   }
 
   try {
-    const full = resolveArtifactPath(taskId, filePath);
+    const full = await resolveArtifactPath(taskId, filePath);
+    // Defense-in-depth: si el destino es un symlink existente, no se
+    // sigue (podría apuntar a un archivo/directorio fuera del workspace
+    // y writeFile lo pisaría en el host).
+    const st = await lstat(full).catch(() => null);
+    if (st?.isSymbolicLink()) return c.json({ error: "symlink_not_allowed" }, 403);
     await mkdir(dirname(full), { recursive: true });
     await writeFile(full, content, "utf8");
     return c.json({ ok: true, path: filePath, bytes });
@@ -192,7 +199,7 @@ app.get("/files/:taskId/:path{.+}", async (c) => {
   }
 
   try {
-    const full = resolveArtifactPath(taskId, filePath);
+    const full = await resolveArtifactPath(taskId, filePath);
     const content = await readFile(full, "utf8");
     return c.json({ ok: true, path: filePath, content });
   } catch (error) {

@@ -1,5 +1,5 @@
 import { resolve, relative, isAbsolute } from "node:path";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import { config } from "./config.js";
 
 /**
@@ -77,7 +77,7 @@ export async function cleanupWorkspace(taskId: string): Promise<void> {
  * Valida que un cwd relativo quede dentro del workspace.
  * Devuelve el path absoluto o lanza.
  */
-export function resolveInsideWorkspace(taskId: string, cwd?: string): string {
+export async function resolveInsideWorkspace(taskId: string, cwd?: string): Promise<string> {
   const workspace = workspaceDir(taskId);
   if (!cwd) return workspace;
 
@@ -89,7 +89,52 @@ export function resolveInsideWorkspace(taskId: string, cwd?: string): string {
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new SecurityError(`cwd escapa del workspace: ${cwd}`);
   }
+  // Chequeo real: el cwd (o un directorio intermedio) puede ser un
+  // symlink creado dentro del workspace que apunte afuera. Cuando el
+  // path todavía no existe, se valida el ancestro existente más profundo.
+  await assertRealPathInside(workspace, resolved);
   return resolved;
+}
+
+/**
+ * Verifica que resolvedPath (que puede atravesar symlinks) resuelva
+ * dentro de baseDir en el filesystem REAL. Lanza SecurityError si no.
+ *
+ * El chequeo léxico (resolve/relative) no alcanza: un symlink creado
+ * dentro del workspace puede apuntar afuera. Esto valida contra el
+ * path real del host.
+ *
+ * Si resolvedPath no existe todavía (creación de archivo nuevo),
+ * verifica el ancestro existente más profundo (el directorio padre
+ * real) y exige que esté dentro de baseDir.
+ */
+export async function assertRealPathInside(baseDir: string, resolvedPath: string): Promise<void> {
+  let target = resolvedPath;
+  let missing = false;
+  // Buscar el ancestro existente más profundo.
+  for (;;) {
+    try {
+      target = await realpath(target);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new SecurityError(`No se pudo resolver la ruta real: ${resolvedPath}`);
+      }
+      const parent = target.slice(0, target.lastIndexOf("/")) || "/";
+      if (parent === target) {
+        // llegamos a "/" sin encontrar nada existente
+        target = "/";
+        break;
+      }
+      target = parent;
+      missing = true;
+    }
+  }
+  const rel = relative(baseDir, target);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new SecurityError(`Ruta real fuera del workspace: ${resolvedPath}`);
+  }
+  void missing;
 }
 
 /** Valida comando + args contra la denylist. Lanza SecurityError si falla. */

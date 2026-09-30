@@ -69,7 +69,7 @@ export class CommandRunner {
 
     // El workspace de la tarea se monta en /workspace del contenedor.
     await ensureWorkspace(req.taskId);
-    const hostWorkspace = resolveInsideWorkspace(req.taskId, req.cwd ?? undefined);
+    const hostWorkspace = await resolveInsideWorkspace(req.taskId, req.cwd ?? undefined);
 
     // docker run con límites de recursos y auto-eliminación.
     const dockerArgs = dockerArgsFor({
@@ -103,7 +103,7 @@ export class CommandRunner {
     assertCommandAllowed(req.command, req.args);
 
     await ensureWorkspace(req.taskId);
-    const cwd = resolveInsideWorkspace(req.taskId, req.cwd);
+    const cwd = await resolveInsideWorkspace(req.taskId, req.cwd);
     const timeoutMs = Math.min(req.timeoutMs ?? config.defaultTimeoutMs, config.maxTimeoutMs);
 
     const start = Date.now();
