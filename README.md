@@ -7,6 +7,9 @@
 
 > Agente de inteligencia artificial autónomo que corre en tu propia máquina. Atiende por Telegram, razona con un LLM a través de **Ollama Cloud** y ejecuta acciones reales (comandos, scripts, npm, pip) dentro de un **sandbox Docker aislado**.
 
+> [!NOTE]
+> **aki-agent es la evolución de [Mochi](https://github.com/beresiartejuan/mochi)**, mi anterior bot personal de Telegram: un proyecto más simple que ha sido abandonado en favor de este.
+
 ![Diagrama de arquitectura de aki-agent](docs/architecture.png)
 
 ## Tabla de contenidos
