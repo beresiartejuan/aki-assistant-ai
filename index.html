@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aki-agent — un asistente de IA que vive en tu máquina</title>
+<meta name="description" content="Agente de IA autónomo, self-hosted: atiende por Telegram, razona con Ollama Cloud y ejecuta comandos reales en un sandbox Docker aislado. Sin SDKs de agentes.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230084FF'/%3E%3Ctext x='32' y='45' font-family='monospace' font-size='34' font-weight='700' fill='%2305070E' text-anchor='middle'%3Ea_%3C/text%3E%3C/svg%3E">
+<meta property="og:title" content="aki-agent — un asistente de IA que vive en tu máquina">
+<meta property="og:description" content="Atiende por Telegram, razona con un modelo abierto y ejecuta acciones reales en un sandbox aislado. 100 % self-hosted.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- tokens ---------- */
+:root{
+  --bg:#05070e;
+  --panel:#0a101f;
+  --panel-2:#0d1528;
+  --line:#1b2742;
+  --line-soft:#131c31;
+  --text:#e8eefb;
+  --dim:#8ca0c7;
+  --faint:#5a6d93;
+  --blue:#0084ff;
+  --blue-2:#00c2ff;
+  --blue-soft:#54b0ff;
+  --glow:rgba(0,132,255,.32);
+  --amber:#ffb454;
+  --green:#3ddc97;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --disp:"Chakra Petch","JetBrains Mono",system-ui,sans-serif;
+  --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+/* ---------- base ---------- */
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:clip;
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  background-image:radial-gradient(rgba(0,132,255,.07) 1px,transparent 1px);
+  background-size:26px 26px;
+  mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 40%,transparent 100%);
+  -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 40%,transparent 100%);
+  pointer-events:none;
+  z-index:0;
+}
+::selection{background:var(--glow);color:#fff}
+a{color:var(--blue-soft);text-decoration:none}
+a:hover{color:var(--blue-2);text-decoration:underline}
+:focus-visible{outline:2px solid var(--blue-soft);outline-offset:2px;border-radius:4px}
+.skip{position:absolute;left:-9999px;top:0;background:var(--blue);color:#05070e;padding:.5rem 1rem;font-family:var(--mono);font-size:.8rem;z-index:99}
+.skip:focus{left:1rem;top:1rem}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+section{padding:76px 0}
+.eyebrow{
+  font-family:var(--mono);
+  font-size:.72rem;
+  letter-spacing:.22em;
+  text-transform:uppercase;
+  color:var(--blue-soft);
+  margin-bottom:14px;
+}
+.eyebrow::before{content:"// "}
+h2{
+  font-family:var(--disp);
+  font-size:clamp(1.6rem,3.4vw,2.2rem);
+  font-weight:600;
+  letter-spacing:.01em;
+  margin-bottom:10px;
+}
+.lede{color:var(--dim);max-width:640px}
+/* ---------- topbar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:10;
+  background:rgba(5,7,14,.86);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line-soft);
+}
+.topbar-in{
+  max-width:1080px;margin:0 auto;padding:0 24px;
+  height:58px;display:flex;align-items:center;gap:26px;
+}
+.brand{
+  font-family:var(--mono);font-weight:700;font-size:1rem;
+  color:var(--text);letter-spacing:-.02em;
+  display:flex;align-items:center;gap:9px;
+}
+.brand b{color:var(--blue)}
+.brand .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(61,220,151,.7)}
+.nav{display:flex;gap:20px;margin-left:auto;align-items:center}
+.nav a{font-family:var(--mono);font-size:.8rem;color:var(--dim);letter-spacing:.04em}
+.nav a:hover{color:var(--text);text-decoration:none}
+.nav .gh{
+  border:1px solid var(--line);border-radius:8px;padding:7px 13px;color:var(--text);
+  transition:border-color .2s;
+}
+.nav .gh:hover{border-color:var(--blue)}
+.btn-clone{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:.78rem;font-weight:500;
+  background:var(--blue);color:#05070e;border:none;border-radius:8px;
+  padding:8px 14px;cursor:pointer;letter-spacing:0;white-space:nowrap;
+  transition:background .2s;
+}
+.btn-clone:hover{background:var(--blue-2)}
+.btn-clone.ok{background:var(--green)}
+/* ---------- hero ---------- */
+.hero{padding:88px 0 70px}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:56px;align-items:center}
+.kicker{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--dim);border:1px solid var(--line);border-radius:999px;
+  padding:7px 14px;margin-bottom:26px;
+}
+.kicker i{width:6px;height:6px;border-radius:50%;background:var(--blue);box-shadow:0 0 8px var(--glow);animation:pulse 2.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+h1{
+  font-family:var(--disp);
+  font-size:clamp(2.4rem,5.6vw,3.9rem);
+  line-height:1.04;
+  font-weight:600;
+  letter-spacing:-.01em;
+  margin-bottom:22px;
+}
+h1 .cursor{
+  display:inline-block;width:.5ch;
+  color:var(--blue);
+  animation:blink 1.1s steps(2) infinite;
+  font-weight:700;
+}
+@keyframes blink{to{opacity:0}}
+.hero p.sub{color:var(--dim);font-size:1.05rem;max-width:34em;margin-bottom:30px}
+.hero p.sub strong{color:var(--text);font-weight:600}
+.cta-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:22px}
+.btn-primary{
+  font-family:var(--mono);font-size:.85rem;font-weight:700;
+  background:var(--blue);color:#05070e;border:none;border-radius:10px;
+  padding:13px 20px;cursor:pointer;letter-spacing:.01em;
+  transition:background .2s,transform .2s;
+}
+.btn-primary:hover{background:var(--blue-2);transform:translateY(-1px)}
+.btn-primary.ok{background:var(--green)}
+.btn-ghost{
+  font-family:var(--mono);font-size:.85rem;font-weight:500;
+  color:var(--text);background:transparent;border:1px solid var(--line);
+  border-radius:10px;padding:13px 20px;cursor:pointer;letter-spacing:.01em;
+  transition:border-color .2s;color:var(--text);text-decoration:none;display:inline-block;
+}
+.btn-ghost:hover{border-color:var(--blue);color:var(--text);text-decoration:none}
+.clone-cmd{
+  display:flex;align-items:center;gap:12px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:11px 14px;max-width:560px;
+}
+.clone-cmd code{
+  font-family:var(--mono);font-size:.8rem;color:var(--dim);
+  white-space:nowrap;overflow-x:auto;scrollbar-width:none;
+  min-width:0;flex:1;
+  mask-image:linear-gradient(90deg,#000 calc(100% - 42px),transparent);
+  -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 42px),transparent);
+}
+.clone-cmd code b{color:var(--blue-soft);font-weight:500}
+.clone-cmd button{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap;
+  transition:border-color .2s,color .2s;
+}
+.clone-cmd button:hover{border-color:var(--blue);color:var(--text)}
+.clone-cmd button.ok{border-color:var(--green);color:var(--green)}
+.hero-stats{
+  display:flex;gap:0;margin-top:34px;
+  font-family:var(--mono);font-size:.72rem;color:var(--faint);
+  border-top:1px solid var(--line-soft);padding-top:16px;
+}
+.hero-stats span{padding-right:22px;margin-right:22px;border-right:1px solid var(--line-soft)}
+.hero-stats span:last-child{border:none}
+.hero-stats b{color:var(--text);font-weight:500;font-size:.8rem;display:block;white-space:nowrap}
+/* ---------- stream (firma) ---------- */
+.stream{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.7),0 0 60px -20px var(--glow);
+  overflow:hidden;
+}
+.stream-head{
+  display:flex;align-items:center;gap:10px;
+  padding:13px 18px;border-bottom:1px solid var(--line-soft);
+  font-family:var(--mono);font-size:.74rem;color:var(--dim);
+}
+.stream-head .lights{display:flex;gap:6px}
+.stream-head .lights i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.stream-head .lights i:first-child{background:#ff5f57}
+.stream-head .lights i:nth-child(2){background:#febc2e}
+.stream-head .lights i:last-child{background:#28c840}
+.stream-head .online{margin-left:auto;color:var(--green)}
+.stream-body{padding:26px 22px 30px;display:flex;flex-direction:column;gap:14px;min-height:330px}
+.msg{
+  display:flex;gap:10px;align-items:flex-end;max-width:92%;
+  opacity:0;transform:translateY(10px);
+  animation:rise .5s ease forwards;
+}
+.msg.aki{animation-delay:4.6s}
+.msg.user{align-self:flex-end;flex-direction:row-reverse;animation-delay:.5s}
+@keyframes rise{to{opacity:1;transform:none}}
+.avatar{
+  width:28px;height:28px;border-radius:9px;flex-shrink:0;
+  display:grid;place-items:center;
+  font-family:var(--mono);font-size:.62rem;font-weight:700;
+}
+.msg.user .avatar{background:var(--panel-2);border:1px solid var(--line);color:var(--dim)}
+.msg.aki .avatar{background:linear-gradient(135deg,var(--blue),var(--blue-2));color:#05070e}
+.bubble{
+  padding:12px 16px;border-radius:14px;font-size:.87rem;line-height:1.5;
+}
+.msg.user .bubble{
+  background:linear-gradient(135deg,#0066d4,#0084ff);color:#fff;
+  border-bottom-right-radius:4px;
+}
+.msg.aki .bubble{
+  background:var(--panel-2);border:1px solid var(--line);
+  border-bottom-left-radius:4px;color:var(--text);
+}
+.tool-run{
+  display:flex;align-items:center;gap:10px;align-self:flex-start;
+  font-family:var(--mono);font-size:.74rem;color:var(--blue-soft);
+  background:rgba(0,132,255,.08);border:1px solid rgba(0,132,255,.35);
+  border-radius:10px;padding:10px 14px;
+  opacity:0;transform:translateY(10px);
+  animation:rise .5s ease forwards 2s, gone .4s ease forwards 3.2s;
+}
+@keyframes gone{to{opacity:0;visibility:hidden}}
+.tool-run .name{
+  font-weight:700;color:var(--blue-2);background:rgba(0,194,255,.12);
+  border-radius:5px;padding:2px 7px;font-size:.68rem;letter-spacing:.04em;
+}
+.tool-run .ellipsis{display:inline-flex;gap:3px}
+.tool-run .ellipsis i{width:4px;height:4px;border-radius:50%;background:var(--blue-soft);animation:blink 1s 3 infinite}
+.tool-run .ellipsis i:nth-child(2){animation-delay:.2s}
+.tool-run .ellipsis i:nth-child(3){animation-delay:.4s}
+.tool-run.ok{
+  color:var(--green);border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.07);
+  animation:rise .5s ease forwards 3.4s;
+}
+.tool-run.ok .file{color:#fff;font-weight:700}
+/* ---------- qué es / features ---------- */
+.features{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:40px}
+.feature{
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:26px 24px;
+  transition:border-color .25s,transform .25s;
+}
+.feature:hover{border-color:rgba(0,132,255,.5);transform:translateY(-3px)}
+.feature .fn{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--blue-soft);margin-bottom:14px;
+}
+.feature h3{font-family:var(--disp);font-size:1.15rem;font-weight:600;margin-bottom:10px}
+.feature p{color:var(--dim);font-size:.88rem}
+.feature p code{font-family:var(--mono);font-size:.78rem;color:var(--blue-soft);background:var(--panel-2);padding:1px 6px;border-radius:4px}
+.local-note{
+  margin-top:22px;font-family:var(--mono);font-size:.8rem;color:var(--faint);
+  border-left:2px solid var(--blue);padding:6px 0 6px 18px;
+}
+.local-note b{color:var(--text);font-weight:500}
+/* ---------- instalación ---------- */
+.steps{margin-top:44px;display:flex;flex-direction:column}
+.step{
+  display:grid;grid-template-columns:52px minmax(0,1fr);gap:22px;
+  position:relative;padding-bottom:38px;
+}
+.step::before{
+  content:"";position:absolute;left:25px;top:44px;bottom:6px;
+  width:1px;background:var(--line);
+}
+.step:last-child::before{display:none}
+.step-n{
+  width:52px;height:52px;border-radius:13px;flex-shrink:0;
+  border:1px solid var(--line);background:var(--panel);
+  display:grid;place-items:center;
+  font-family:var(--mono);font-size:.95rem;font-weight:700;color:var(--blue-soft);
+  position:relative;z-index:1;
+}
+.step h3{font-family:var(--disp);font-size:1.1rem;font-weight:600;margin:.85rem 0 6px}
+.step p{color:var(--dim);font-size:.88rem;margin-bottom:14px;max-width:620px}
+.step p code{font-family:var(--mono);font-size:.76rem;color:var(--blue-soft)}
+.term{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;max-width:700px;
+}
+.term-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 14px;border-bottom:1px solid var(--line-soft);
+  font-family:var(--mono);font-size:.68rem;color:var(--faint);letter-spacing:.08em;
+}
+.term-bar button{
+  font-family:var(--mono);font-size:.64rem;letter-spacing:.08em;text-transform:uppercase;
+  background:transparent;border:1px solid var(--line);color:var(--faint);
+  border-radius:5px;padding:3px 9px;cursor:pointer;transition:border-color .2s,color .2s;
+}
+.term-bar button:hover{border-color:var(--blue);color:var(--text)}
+.term-bar button.ok{border-color:var(--green);color:var(--green)}
+.term pre{
+  padding:16px 18px;overflow-x:auto;
+  font-family:var(--mono);font-size:.8rem;line-height:1.75;color:#c9d6f2;
+}
+.term pre .p{color:var(--blue);font-weight:700}
+.term pre .c{color:var(--faint)}
+.term pre .ok-line{color:var(--green)}
+/* ---------- envs ---------- */
+.env-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,.65fr);gap:36px;margin-top:44px;align-items:start}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:.84rem;min-width:520px}
+thead th{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--blue-soft);text-align:left;font-weight:500;
+  padding:14px 18px;border-bottom:1px solid var(--line);
+  background:var(--panel-2);
+}
+tbody td{padding:15px 18px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(0,132,255,.035)}
+td.var{font-family:var(--mono);font-size:.78rem;color:var(--text);white-space:nowrap}
+td.var i{color:var(--blue);font-style:normal;margin-right:2px}
+td.file{font-family:var(--mono);font-size:.72rem;color:var(--faint);white-space:nowrap}
+td.how{color:var(--dim);font-size:.8rem}
+td.how a{font-family:var(--mono);font-size:.74rem}
+.env-side{display:flex;flex-direction:column;gap:16px}
+.env-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;
+}
+.env-card h4{
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--amber);margin-bottom:10px;font-weight:500;
+}
+.env-card p{color:var(--dim);font-size:.82rem;margin-bottom:12px}
+.env-card p code{font-family:var(--mono);font-size:.76rem;color:var(--blue-soft)}
+.env-card .term{max-width:none}
+.env-card .term pre{font-size:.74rem;padding:12px 16px}
+.env-card.safe h4{color:var(--green)}
+/* ---------- arquitectura ---------- */
+.arch-flow{margin-top:44px;max-width:760px}
+.part{
+  display:grid;grid-template-columns:200px 1fr auto;gap:24px;align-items:center;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:20px 26px;
+  transition:border-color .25s;
+}
+.part:hover{border-color:rgba(0,132,255,.5)}
+.part .pname{display:flex;align-items:center;gap:14px}
+.part .pnum{
+  font-family:var(--mono);font-size:.68rem;color:var(--faint);
+  border:1px solid var(--line);border-radius:6px;padding:2px 7px;
+}
+.part h3{font-family:var(--mono);font-size:.9rem;font-weight:700;letter-spacing:-.01em}
+.part .pdesc{color:var(--dim);font-size:.82rem}
+.part .pport{
+  font-family:var(--mono);font-size:.72rem;color:var(--faint);
+  border:1px dashed var(--line);border-radius:6px;padding:4px 10px;white-space:nowrap;
+}
+.part .pport b{color:var(--blue-soft);font-weight:500}
+.part.hollow{background:transparent;border-style:dashed}
+.part.hollow:hover{border-color:var(--line)}
+.part.hollow h3{color:var(--dim);font-weight:500}
+.linkline{
+  display:flex;align-items:center;gap:14px;
+  padding:4px 0 4px 64px;
+  font-family:var(--mono);font-size:.7rem;color:var(--faint);
+}
+.linkline .arrow{color:var(--blue);font-size:.9rem}
+.linkline .lbl{
+  border:1px solid var(--line-soft);background:var(--panel);
+  border-radius:999px;padding:3px 12px;color:var(--blue-soft);letter-spacing:.02em;
+}
+.linkline .up{color:var(--green)}
+.arch-foot{
+  margin-top:30px;display:flex;gap:12px;flex-wrap:wrap;
+}
+.arch-foot span{
+  font-family:var(--mono);font-size:.72rem;color:var(--dim);
+  border:1px solid var(--line);border-radius:999px;padding:7px 16px;
+}
+.arch-foot span b{color:var(--blue-soft);font-weight:500}
+/* ---------- memoria ---------- */
+.memory{
+  margin-top:88px;padding-top:48px;border-top:1px solid var(--line-soft);
+}
+.mem-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-top:36px}
+.mem{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 18px;
+}
+.mem .lv{
+  font-family:var(--mono);font-size:.64rem;letter-spacing:.16em;color:var(--blue-soft);
+  margin-bottom:10px;display:block;
+}
+.mem h4{font-family:var(--disp);font-size:.98rem;font-weight:600;margin-bottom:6px}
+.mem p{color:var(--faint);font-size:.76rem;line-height:1.55}
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line-soft);padding:40px 0 46px;margin-top:20px}
+.foot-in{
+  max-width:1080px;margin:0 auto;padding:0 24px;
+  display:flex;align-items:center;gap:26px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:.74rem;color:var(--faint);
+}
+.foot-brand{font-weight:700;color:var(--text);font-size:.9rem}
+.foot-brand b{color:var(--blue)}
+.foot-in a{color:var(--dim)}
+.foot-in a:hover{color:var(--text)}
+.foot-in .flinks{margin-left:auto;display:flex;gap:20px}
+/* ---------- responsive ---------- */
+@media (max-width:960px){
+  .hero-grid{grid-template-columns:minmax(0,1fr);gap:44px}
+  .features{grid-template-columns:minmax(0,1fr)}
+  .env-grid{grid-template-columns:minmax(0,1fr)}
+  .mem-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .part{grid-template-columns:1fr;gap:10px}
+  .part .pport{justify-self:start}
+  .linkline{padding-left:20px}
+  .hero-stats{flex-wrap:wrap;gap:12px 0}
+  .hero-stats span{padding-right:16px;margin-right:16px}
+}
+@media (max-width:640px){
+  .nav a:not(.gh){display:none}
+  .btn-clone{display:none}
+  section{padding:56px 0}
+  .hero{padding:60px 0 50px}
+  .mem-grid{grid-template-columns:minmax(0,1fr)}
+  .kicker{font-size:.64rem;letter-spacing:.12em;padding:6px 11px}
+  .clone-cmd{max-width:100%}
+  .msg{max-width:100%}
+}
+/* ---------- reducción de movimiento ---------- */
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .msg,.tool-run{animation:none;opacity:1;transform:none}
+  .tool-run.ok{animation:none;opacity:1;transform:none}
+  .tool-run:not(.ok){display:none}
+  h1 .cursor,.kicker i,.tool-run .ellipsis i{animation:none}
+  *{transition:none!important}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#que-es">Ir al contenido</a>
+
+<!-- ============ cabecera: links rápidos + clonar repo ============ -->
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#"><span class="dot"></span>aki<b>_</b>agent</a>
+    <nav class="nav" aria-label="Links rápidos">
+      <a href="#que-es">Qué es</a>
+      <a href="#instalacion">Instalación</a>
+      <a href="#variables">Variables</a>
+      <a href="#arquitectura">Arquitectura</a>
+      <button class="btn-clone" data-copy="git clone https://github.com/beresiartejuan/aki-assistant-ai.git" type="button">⌘ git clone</button>
+      <a class="gh" href="https://github.com/beresiartejuan/aki-assistant-ai" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ============ hero ============ -->
+<section class="hero" aria-labelledby="hero-t">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <span class="kicker"><i></i> self-hosted · telegram · sandbox docker</span>
+        <h1 id="hero-t">Corre en tu máquina.<br>Responde en tu bolsillo<span class="cursor">▌</span></h1>
+        <p class="sub">
+          Aki es un agente de IA autónomo: escucha por <strong>Telegram</strong>, razona con un modelo
+          abierto vía <strong>Ollama Cloud</strong> y ejecuta comandos reales dentro de un
+          <strong>sandbox Docker aislado</strong>. Sin SDKs de agentes — cada decisión es suya.
+        </p>
+        <div class="cta-row">
+          <button class="btn-primary" data-copy="git clone https://github.com/beresiartejuan/aki-assistant-ai.git" type="button">git clone aki-assistant-ai</button>
+          <a class="btn-ghost" href="#instalacion">Instalación completa ↓</a>
+        </div>
+        <div class="clone-cmd">
+          <code><b>$</b> git clone https://github.com/beresiartejuan/aki-assistant-ai.git</code>
+          <button data-copy="git clone https://github.com/beresiartejuan/aki-assistant-ai.git" type="button">copiar</button>
+        </div>
+        <div class="hero-stats">
+          <span><b>3 servicios</b>gateway · core · sandbox</span>
+          <span><b>15 rondas</b>de tools por segmento</span>
+          <span><b>4 capas</b>de memoria</span>
+          <span><b>0 SDKs</b>de agentes</span>
+        </div>
+      </div>
+
+      <!-- firma: copia viva del loop en Telegram -->
+      <div class="stream" role="img" aria-label="Demo animada: un usuario pide un informe por Telegram, Aki ejecuta un comando en el sandbox y entrega el archivo resultante en el chat.">
+        <div class="stream-head">
+          <span class="lights"><i></i><i></i><i></i></span>
+          aki · @aki_assistant_bot
+          <span class="online">● online</span>
+        </div>
+        <div class="stream-body">
+          <div class="msg user">
+            <span class="avatar" aria-hidden="true">vos</span>
+            <div class="bubble">aki, generá un CSV con las fases de la luna de octubre</div>
+          </div>
+          <div class="tool-run">
+            <span class="name">run_command</span>
+            python3 moonphases.py
+            <span class="ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
+          </div>
+          <div class="tool-run ok">
+            ✓&nbsp;12 KB → <span class="file">lunas_octubre.csv</span>
+          </div>
+          <div class="msg aki">
+            <span class="avatar" aria-hidden="true">a</span>
+            <div class="bubble">Listo — 4 fases, día por día. Te lo mando: <b>lunas_octubre.csv</b> 📎</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ qué es ============ -->
+<section id="que-es" aria-labelledby="que-t">
+  <div class="wrap">
+    <span class="eyebrow">Qué es aki</span>
+    <h2 id="que-t">Un asistente que decide, ejecuta y aprende</h2>
+    <p class="lede">Tres responsabilidades bien separadas, orquestadas sin frameworks: lo que razona no ejecuta, lo que ejecuta no recuerda, y lo que recuerda no sale de tu equipo.</p>
+    <div class="features">
+      <article class="feature">
+        <span class="fn">función</span>
+        <h3>Razona</h3>
+        <p>Un modelo abierto (<code>nemotron-3-nano:30b</code>) vía Ollama Cloud planifica y decide. El sistema de tools es propio: definiciones declarativas con Zod, serializadas a JSON Schema. Nada de SDKs de agentes entre tu prompt y el modelo.</p>
+      </article>
+      <article class="feature">
+        <span class="fn">acción</span>
+        <h3>Ejecuta</h3>
+        <p>Cada <code>run_command</code> cae en un contenedor Docker endurecido: rootfs de solo lectura, sin capabilities, límite de 2 GB de RAM y usuario sin privilegios. Los archivos solo llegan a tu chat si Aki los marca con <code>deliver_file</code>.</p>
+      </article>
+      <article class="feature">
+        <span class="fn">continuidad</span>
+        <h3>Recuerda</h3>
+        <p>Entre tareas consolida aprendizajes en memoria semántica: embeddings locales y vectores en LanceDB, dedupe por similitud coseno ≥ 0,90 y TTL de 30 días. Los hechos clave se versionan — nunca se pisan sin rastro.</p>
+      </article>
+    </div>
+    <p class="local-note"><b>El razonamiento viaja; tus datos no.</b> La ejecución, los archivos, los episodios y la memoria viven en tu máquina — el LLM remoto solo lee el prompt y el contexto que tú le envías.</p>
+  </div>
+</section>
+
+<!-- ============ instalación ============ -->
+<section id="instalacion" aria-labelledby="inst-t">
+  <div class="wrap">
+    <span class="eyebrow">Instalación</span>
+    <h2 id="inst-t">De cero a tu bot en línea, en cinco pasos</h2>
+    <p class="lede">Requisitos: <strong>Node.js ≥ 22.5</strong> (usa <code style="font-family:var(--mono);font-size:.85em;color:var(--blue-soft)">node:sqlite</code> nativo), <strong>pnpm ≥ 10</strong>, <strong>Docker</strong>, <strong>Ollama local</strong> para embeddings, y un bot creado con <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>.</p>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-n" aria-hidden="true">01</span>
+        <div>
+          <h3>Cloná e instalá dependencias</h3>
+          <p>Monorepo con pnpm workspaces: gateway, agente, sandbox y paquete reservado.</p>
+          <div class="term">
+            <div class="term-bar"><span>bash</span><button data-copy="git clone https://github.com/beresiartejuan/aki-assistant-ai.git && cd aki-assistant-ai && pnpm install" type="button">copiar</button></div>
+            <pre><span class="p">$</span> git clone https://github.com/beresiartejuan/aki-assistant-ai.git
+<span class="p">$</span> cd aki-assistant-ai
+<span class="p">$</span> pnpm install</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-n" aria-hidden="true">02</span>
+        <div>
+          <h3>Creá los archivos de entorno</h3>
+          <p>Cada paquete carga su propio <code>.env</code>. Las cuatro variables imprescindibles están en la <a href="#variables">tabla de abajo</a>.</p>
+          <div class="term">
+            <div class="term-bar"><span>bash</span><button data-copy="touch packages/agent-core/.env packages/executor/.env packages/telegram-gateway/.env" type="button">copiar</button></div>
+            <pre><span class="p">$</span> touch packages/agent-core/.env
+<span class="p">$</span> touch packages/executor/.env
+<span class="p">$</span> touch packages/telegram-gateway/.env</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-n" aria-hidden="true">03</span>
+        <div>
+          <h3>Construí la imagen del sandbox</h3>
+          <p>Contenedor Ubuntu minimal desde donde Aki ejecuta comandos por tarea, sin tocar tu host.</p>
+          <div class="term">
+            <div class="term-bar"><span>bash</span><button data-copy="docker build -f packages/executor/docker/sandbox.Dockerfile -t aki-sandbox:latest packages/executor/docker/" type="button">copiar</button></div>
+            <pre><span class="p">$</span> docker build -f packages/executor/docker/sandbox.Dockerfile \
+    -t <span class="ok-line">aki-sandbox:latest</span> packages/executor/docker/</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-n" aria-hidden="true">04</span>
+        <div>
+          <h3>Bajá el modelo de embeddings local</h3>
+          <p>La memoria semántica se vectoriza con Ollama <em>local</em> — ese cómputo nunca se delega a la nube. Requiere Ollama instalado y corriendo en <code>127.0.0.1:11434</code>.</p>
+          <div class="term">
+            <div class="term-bar"><span>bash</span><button data-copy="ollama pull qwen3-embedding:0.6b" type="button">copiar</button></div>
+            <pre><span class="p">$</span> ollama pull <span class="ok-line">qwen3-embedding:0.6b</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-n" aria-hidden="true">05</span>
+        <div>
+          <h3>Levantá los tres servicios</h3>
+          <p>En tres terminales separadas, <strong>en este orden</strong>: sandbox → cerebro → gateway.</p>
+          <div class="term">
+            <div class="term-bar"><span>bash · 3 terminales</span><button data-copy="pnpm --filter @aki/executor dev
+pnpm --filter @aki/agent-core dev
+pnpm --filter @aki/telegram-gateway dev" type="button">copiar</button></div>
+            <pre><span class="c"># terminal 1 — sandbox de ejecución</span>
+<span class="p">$</span> pnpm --filter @aki/executor dev        <span class="c">#:3100</span>
+
+<span class="c"># terminal 2 — cerebro del agente</span>
+<span class="p">$</span> pnpm --filter @aki/agent-core dev      <span class="c">#:3000</span>
+
+<span class="c"># terminal 3 — gateway de Telegram</span>
+<span class="p">$</span> pnpm --filter @aki/telegram-gateway dev <span class="c">#:3200</span>
+
+<span class="ok-line">✓ Escribile al bot por Telegram — Aki responde desde tu máquina.</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ variables de entorno ============ -->
+<section id="variables" aria-labelledby="vars-t">
+  <div class="wrap">
+    <span class="eyebrow">Variables de entorno</span>
+    <h2 id="vars-t">Cuatro valores y arranca</h2>
+    <p class="lede">Los tres <code style="font-family:var(--mono);font-size:.85em;color:var(--blue-soft)">.env</code> del paso 02 usan las mismas variables en cada paquete. Hay muchas más (timeouts, límites, modelo), pero estas cuatro son obligatorias.</p>
+
+    <div class="env-grid">
+      <div class="tblwrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Variable</th>
+              <th scope="col">Archivo</th>
+              <th scope="col">Cómo obtenerla</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="var"><i>§</i>OLLAMA_API_KEY</td>
+              <td class="file">agent-core/.env</td>
+              <td class="how">API key de Ollama Cloud — <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a></td>
+            </tr>
+            <tr>
+              <td class="var"><i>§</i>TELEGRAM_BOT_TOKEN</td>
+              <td class="file">telegram-gateway/.env</td>
+              <td class="how">Token que te da <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> al crear el bot</td>
+            </tr>
+            <tr>
+              <td class="var"><i>§</i>ALLOWED_TELEGRAM_USER_IDS</td>
+              <td class="file">telegram-gateway/.env</td>
+              <td class="how">Tu ID numérico de Telegram — consultalo con <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a></td>
+            </tr>
+            <tr>
+              <td class="var"><i>§</i>INTERNAL_API_KEY</td>
+              <td class="file">los tres /.env</td>
+              <td class="how">Shared secret de auth inter-servicios — generalo una sola vez (ver al lado)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="env-side">
+        <div class="env-card">
+          <h4>Internal API key</h4>
+          <p>Los tres servicios se autentican entre sí con este valor (header <code>x-internal-key</code>). Generá uno fuerte:</p>
+          <div class="term">
+            <div class="term-bar"><span>bash</span><button data-copy="openssl rand -hex 32" type="button">copiar</button></div>
+            <pre><span class="p">$</span> openssl rand -hex 32
+<span class="c"># pega el mismo valor en los tres .env</span></pre>
+          </div>
+        </div>
+        <div class="env-card safe">
+          <h4>⚠︎ Sin allowlist, cualquiera habla con tu bot</h4>
+          <p>Si no definís <code>ALLOWED_TELEGRAM_USER_IDS</code>, el bot procesa mensajes de cualquier usuario de Telegram. En producción, configurá siempre tu ID.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ arquitectura ============ -->
+<section id="arquitectura" aria-labelledby="arch-t">
+  <div class="wrap">
+    <span class="eyebrow">Arquitectura</span>
+    <h2 id="arch-t">Las partes de Aki y cómo trabajan entre sí</h2>
+    <p class="lede">Monorepo con pnpm workspaces. Cada pieza es un servicio HTTP propio en <code style="font-family:var(--mono);font-size:.85em;color:var(--blue-soft)">127.0.0.1</code>, autenticado por <code style="font-family:var(--mono);font-size:.85em;color:var(--blue-soft)">x-internal-key</code>. Lo que conecta a cada una con la siguiente es lo importante:</p>
+
+    <div class="arch-flow">
+      <div class="linkline">
+        <span class="arrow">↓</span><span class="lbl">tu mensaje · HTTPS long polling</span>
+      </div>
+      <div class="part">
+        <div class="pname"><span class="pnum">P1</span><h3>telegram-gateway</h3></div>
+        <p class="pdesc">Bot grammY con cola persistente y checkpoint de <em>update_id</em>. Allowlist de usuarios y entrega de resultados + archivos al chat.</p>
+        <span class="pport"> puerto <b>:3200</b></span>
+      </div>
+      <div class="linkline">
+        <span class="arrow">↓</span><span class="lbl">encola el mensaje → cerebro</span>
+      </div>
+      <div class="part">
+        <div class="pname"><span class="pnum">P2</span><h3>agent-core</h3></div>
+        <p class="pdesc">Loop agéntico con continuación automática (hasta 3 segmentos × 15 rondas de tools). Sistema de tools propio, memoria en capas y consolidación de aprendizajes.</p>
+        <span class="pport"> puerto <b>:3000</b></span>
+      </div>
+      <div class="linkline">
+        <span class="arrow">↓</span><span class="lbl">invoca tools → run_command · deliver_file …</span>
+      </div>
+      <div class="part">
+        <div class="pname"><span class="pnum">P3</span><h3>executor</h3></div>
+        <p class="pdesc">Sandbox Docker endurecido: un workspace por tarea, artifacts vía HTTP, límites de RAM/PIDs/tiempo. El host queda intacto.</p>
+        <span class="pport"> puerto <b>:3100</b></span>
+      </div>
+      <div class="linkline">
+        <span class="arrow up">↑</span><span class="lbl">resultado + artifacts → gateway → tu chat</span>
+      </div>
+      <div class="part hollow">
+        <div class="pname"><span class="pnum">P4</span><h3>event-manager</h3></div>
+        <p class="pdesc">Reservado para contratos compartidos entre gateway y agente. Hoy: vacío a propósito.</p>
+        <span class="pport"> reservado</span>
+      </div>
+    </div>
+
+    <div class="arch-foot" aria-label="Dependencias externas">
+      <span><b>Ollama Cloud</b> · razonamiento (remoto)</span>
+      <span><b>Ollama local</b> · embeddings :11434</span>
+      <span><b>SQLite + LanceDB</b> · memoria</span>
+      <span><b>Docker</b> · sandbox aislado</span>
+    </div>
+
+    <!-- memoria en capas -->
+    <div class="memory" aria-labelledby="mem-t">
+      <span class="eyebrow">Memoria en 4+1 capas</span>
+      <h2 id="mem-t">Lo que Aki aprende hoy lo aplica mañana</h2>
+      <div class="mem-grid">
+        <div class="mem">
+          <span class="lv">CAPA 0</span>
+          <h4>Constitución</h4>
+          <p>Reglas inmutables inyectadas al system prompt. Solo lectura para el agente.</p>
+        </div>
+        <div class="mem">
+          <span class="lv">CAPA 1</span>
+          <h4>Scratchpad</h4>
+          <p>Notas efímeras por tarea, se reinyectan al continuar a otro segmento.</p>
+        </div>
+        <div class="mem">
+          <span class="lv">CAPA 2</span>
+          <h4>Episodios</h4>
+          <p>Historial append-only en SQLite: acciones y observaciones de cada tarea.</p>
+        </div>
+        <div class="mem">
+          <span class="lv">CAPA 3</span>
+          <h4>Aprendizajes</h4>
+          <p>Instrucciones generales vectorizadas en LanceDB. Dedupe coseno ≥ 0,90, TTL 30 días.</p>
+        </div>
+        <div class="mem">
+          <span class="lv">CAPA 4</span>
+          <h4>Hechos</h4>
+          <p>Preferencias y datos clave, versionados: nunca se pisa un valor sin rastro.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="foot-in">
+    <span class="foot-brand">aki<b>_</b>agent</span>
+    <span>un asistente de IA que vive en tu máquina</span>
+    <span>MIT · Node 24 · pnpm · Docker</span>
+    <span class="flinks">
+      <a href="https://github.com/beresiartejuan/aki-assistant-ai" target="_blank" rel="noopener">GitHub ↗</a>
+      <a href="https://github.com/beresiartejuan/aki-assistant-ai#readme" target="_blank" rel="noopener">README ↗</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+/* copiar al portapapeles con fallback */
+function copyText(text, btn){
+  var done = function(){
+    var prev = btn.textContent;
+    btn.classList.add('ok');
+    btn.textContent = 'copiado ✓';
+    setTimeout(function(){ btn.classList.remove('ok'); btn.textContent = prev; }, 1600);
+  };
+  var fallback = function(){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){}
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
+  }
+}
+document.querySelectorAll('[data-copy]').forEach(function(btn){
+  btn.addEventListener('click', function(){ copyText(btn.getAttribute('data-copy'), btn); });
+});
+</script>
+</body>
+</html>
