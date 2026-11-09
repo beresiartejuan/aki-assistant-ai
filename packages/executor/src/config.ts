@@ -24,7 +24,11 @@ export const config = {
    * - "docker": cada comando corre en un contenedor efímero (recomendado).
    * - "process": ejecución directa en el host (fallback para desarrollo).
    */
-  sandboxMode: (process.env.EXECUTOR_SANDBOX_MODE as SandboxMode) || "docker",
+  // Fail-safe: solo "process" explícito desactiva docker (un typo no
+  // debe degradar a ejecución en el host).
+  sandboxMode: (process.env.EXECUTOR_SANDBOX_MODE === "process"
+    ? "process"
+    : "docker") as SandboxMode,
 
   /**
    * Directorio raíz del sandbox (workspaces por tarea, montado al

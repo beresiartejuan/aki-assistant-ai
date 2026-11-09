@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import type { ResultPayload } from "./types.js";
 import { ip4Dispatcher } from "./http.js";
 import { internalAuthHeaders } from "./auth.js";
+import { splitMessage } from "./text.js";
 
 /**
  * Entrega de resultados de una tarea al usuario de Telegram:
@@ -77,21 +78,41 @@ async function fetchArtifact(
   }
 }
 
-/** Envía la respuesta de texto al chat. */
-async function sendText(chatId: string | number, text: string): Promise<void> {
+/** Envía un único trozo (<= 4096) con un reintento ante 429. */
+async function sendChunk(chatId: string | number, text: string): Promise<void> {
   const { origin, pathname } = new URL(
     `https://api.telegram.org/bot${config.botToken}/sendMessage`,
   );
-  await ip4Dispatcher.request({
-    origin,
-    path: pathname,
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text.slice(0, 4096), // límite de Telegram
-    }),
-  });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await ip4Dispatcher.request({
+      origin,
+      path: pathname,
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    if (res.statusCode === 429) {
+      const body = (await res.body.json().catch(() => null)) as {
+        parameters?: { retry_after?: number };
+      } | null;
+      const waitS = Math.min(body?.parameters?.retry_after ?? 1, 30);
+      await new Promise((r) => setTimeout(r, waitS * 1000));
+      continue;
+    }
+    await res.body.dump();
+    if (res.statusCode >= 400) {
+      console.error(`[gateway] sendMessage devolvió ${res.statusCode}`);
+    }
+    return;
+  }
+  console.error("[gateway] sendMessage: 429 persistente, mensaje descartado");
+}
+
+/** Envía la respuesta de texto al chat, dividiendo según el límite de Telegram. */
+async function sendText(chatId: string | number, text: string): Promise<void> {
+  for (const chunk of splitMessage(text)) {
+    await sendChunk(chatId, chunk);
+  }
 }
 
 /** Envía un archivo como documento con caption. */

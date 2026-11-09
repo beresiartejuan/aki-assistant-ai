@@ -9,6 +9,7 @@
  * process.loadEnvFile() al importarse, así que acá solo leemos
  * process.env. Si INTERNAL_API_KEY está vacío, NO se exige (modo dev).
  */
+import { timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
 
 /** Header donde viaja el secret. */
@@ -19,11 +20,23 @@ export function internalApiKey(): string {
   return process.env.INTERNAL_API_KEY ?? "";
 }
 
+/** Comparación en tiempo constante (tolera longitudes distintas). */
+export function keysMatch(provided: string | undefined, expected: string): boolean {
+  if (provided === undefined) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) {
+    timingSafeEqual(b, b);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
 /** Middleware Hono: exige el secret si INTERNAL_API_KEY está configurado. */
 export function requireInternalKey() {
   return async (c: Context, next: Next) => {
     const expected = internalApiKey();
-    if (expected && c.req.header(AUTH_HEADER) !== expected) {
+    if (expected && !keysMatch(c.req.header(AUTH_HEADER), expected)) {
       return c.json({ error: "unauthorized" }, 401);
     }
     await next();

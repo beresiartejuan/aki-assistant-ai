@@ -7,6 +7,9 @@ import { config } from "./config.js";
  */
 export const ip4Dispatcher: Dispatcher = new Agent({
   connect: { family: 4, autoSelectFamily: false },
+  // stream:false => los headers llegan al terminar la generación.
+  headersTimeout: config.ollamaTimeoutMs,
+  bodyTimeout: config.ollamaTimeoutMs,
 });
 
 /** Mensaje de conversación para la API de Ollama. */
@@ -66,12 +69,49 @@ export class OllamaError extends Error {
   }
 }
 
+/** true si la URL apunta a esta misma máquina (Ollama local). */
+export function isLocalUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/** Headers de la petición; `authorization` solo si hay API key. */
+export function buildHeaders(apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  return headers;
+}
+
+/** 429 y 5xx se reintentan; el resto de 4xx no. */
+export function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/** Backoff exponencial: base * 2^attempt (attempt arranca en 0). */
+export function backoffDelayMs(attempt: number, baseMs: number): number {
+  return baseMs * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Convierte el mensaje interno al formato de la API (tool_calls). */
+function toWireMessage(m: ChatMessage): Record<string, unknown> {
+  const { toolCalls, ...rest } = m;
+  return toolCalls && toolCalls.length > 0 ? { ...rest, tool_calls: toolCalls } : rest;
+}
+
 /**
- * Invoca un modelo en Ollama Cloud (endpoint /api/chat).
+ * Invoca un modelo de Ollama (endpoint /api/chat).
  *
- * Usa el dispatcher IPv4 y autentica con `Authorization: Bearer`.
- * Devuelve el contenido final del assistant (el campo `thinking`
- * del modelo de razonamiento no se expone).
+ * Usa el dispatcher IPv4. La API key es obligatoria solo para hosts
+ * remotos (en localhost Ollama proxea los modelos :cloud). Aplica
+ * timeout y reintentos con backoff exponencial ante 429/5xx/errores de
+ * red; los 4xx no se reintentan. Devuelve el contenido final del
+ * assistant (el campo `thinking` no se expone).
  */
 export async function chat(
   messages: ChatMessage[],
@@ -83,33 +123,58 @@ export async function chat(
   evalCount?: number;
   toolCalls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }>;
 }> {
-  if (!config.ollamaApiKey) {
-    throw new OllamaError("OLLAMA_API_KEY no está definida");
+  if (!config.ollamaApiKey && !isLocalUrl(config.ollamaBaseUrl)) {
+    throw new OllamaError("OLLAMA_API_KEY no está definida (obligatoria para hosts remotos)");
   }
 
   const model = options.model ?? config.ollamaModel;
-  const payload: Record<string, unknown> = { model, messages, stream: false };
+  const payload: Record<string, unknown> = {
+    model,
+    messages: messages.map(toWireMessage),
+    stream: false,
+  };
   if (options.tools && options.tools.length > 0) {
     payload.tools = options.tools;
   }
-  const res = await ip4Dispatcher.request({
-    origin: config.ollamaBaseUrl,
-    path: "/api/chat",
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${config.ollamaApiKey}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const requestBody = JSON.stringify(payload);
+  const headers = buildHeaders(config.ollamaApiKey);
 
-  const body = (await res.body.json()) as OllamaChatResponse;
-
-  if (res.statusCode !== 200) {
-    throw new OllamaError(
-      `Ollama devolvió ${res.statusCode}: ${JSON.stringify(body)}`,
-      res.statusCode,
-    );
+  let body: OllamaChatResponse | undefined;
+  for (let attempt = 0; ; attempt++) {
+    let failure: OllamaError;
+    let retryable = true;
+    try {
+      const res = await ip4Dispatcher.request({
+        origin: config.ollamaBaseUrl,
+        path: "/api/chat",
+        method: "POST",
+        headers,
+        body: requestBody,
+        signal: AbortSignal.timeout(config.ollamaTimeoutMs),
+      });
+      const text = await res.body.text();
+      let parsed: unknown = text;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // cuerpo no JSON (ej: HTML de un proxy): se reporta como texto
+      }
+      if (res.statusCode === 200 && typeof parsed === "object" && parsed !== null) {
+        body = parsed as OllamaChatResponse;
+        break;
+      }
+      retryable = isRetryableStatus(res.statusCode);
+      failure = new OllamaError(
+        `Ollama devolvió ${res.statusCode}: ${(typeof parsed === "string" ? parsed : JSON.stringify(parsed)).slice(0, 500)}`,
+        res.statusCode,
+      );
+    } catch (error) {
+      failure = new OllamaError(
+        `Error de red/timeout llamando a Ollama: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!retryable || attempt >= config.ollamaMaxRetries) throw failure;
+    await sleep(backoffDelayMs(attempt, config.ollamaRetryBaseMs));
   }
 
   const message = body.message ?? { role: "assistant", content: "" };

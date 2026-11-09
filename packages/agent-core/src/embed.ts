@@ -29,6 +29,7 @@ export async function embed(text: string): Promise<number[]> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: config.embedModel, input: text }),
+    signal: AbortSignal.timeout(30_000),
   });
   const body = (await res.body.json()) as EmbedResponse;
   if (res.statusCode !== 200 || !body.embeddings?.[0]) {

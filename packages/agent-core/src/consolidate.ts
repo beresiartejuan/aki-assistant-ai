@@ -18,21 +18,23 @@ import { decayLearnings, upsertLearning } from "./semantic.js";
 export async function consolidateMemory(): Promise<void> {
   try {
     const candidates = memory.pendingCandidates(20);
+    const done: number[] = [];
+    const failed: number[] = [];
     for (const cand of candidates) {
       try {
         const outcome = await upsertLearning(cand.text);
         logger.info("memory", "Candidato consolidado", { id: cand.id, outcome });
+        done.push(cand.id);
       } catch (error) {
+        failed.push(cand.id);
         logger.warn("memory", "Candidato descartado por error", {
           id: cand.id,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-    memory.resolveCandidates(
-      candidates.map((c) => c.id),
-      "consolidated",
-    );
+    memory.resolveCandidates(done, "consolidated");
+    memory.resolveCandidates(failed, "failed");
 
     await decayLearnings();
   } catch (error) {

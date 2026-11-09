@@ -145,9 +145,11 @@ A continuación se listan las variables de entorno disponibles por paquete. Los 
 
 | Variable | Default | Descripción |
 | --- | --- | --- |
-| `OLLAMA_API_KEY` | *(obligatorio)* | API key de Ollama Cloud. |
+| `OLLAMA_API_KEY` | *(obligatorio en hosts remotos)* | API key de Ollama Cloud. Opcional si `OLLAMA_BASE_URL` apunta a localhost. |
 | `OLLAMA_BASE_URL` | `https://ollama.com` | Endpoint de la API de chat. |
 | `OLLAMA_MODEL` | `nemotron-3-nano:30b` | Modelo principal de razonamiento. |
+| `OLLAMA_TIMEOUT_MS` | `120000` | Timeout por petición a Ollama. |
+| `OLLAMA_MAX_RETRIES` | `2` | Reintentos con backoff exponencial ante 429/5xx/errores de red. |
 | `GATEWAY_URL` | `http://localhost:3200` | URL del gateway para notificar resultados. |
 | `EXECUTOR_URL` | `http://localhost:3100` | URL del executor para ejecutar tools. |
 | `AGENT_MAX_TOOL_ROUNDS` | `15` | Rondas máximas modelo↔tools por segmento. |

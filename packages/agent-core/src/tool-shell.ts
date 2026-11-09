@@ -21,6 +21,8 @@ import { internalAuthHeaders } from "./auth.js";
 /** Dispatcher IPv4 (bug de red local con IPv6). */
 const dispatcher: Dispatcher = new Agent({
   connect: { family: 4, autoSelectFamily: false },
+  headersTimeout: 150_000,
+  bodyTimeout: 150_000,
 });
 
 function loadEnv(): NodeJS.ProcessEnv {

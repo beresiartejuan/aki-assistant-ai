@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo \"Sin tests aún\" && exit 0",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "lint": "echo \"Sin linter aún\" && exit 0"
   },
   "dependencies": {

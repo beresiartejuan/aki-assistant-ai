@@ -48,9 +48,10 @@ const DENYLISTED_ARG_PATTERNS = [
   // Rutas absolutas como argumento único (ej: /etc/passwd).
   // Permite código que contiene paths dentro de strings más largos
   // (eso queda contenido por el sandbox del contenedor).
-  /^\/[a-zA-Z0-9_.-]+$/,
-  // Traversal explícito.
-  /^\.\./,
+  // Cualquier ruta absoluta sin espacios (ej: /etc/passwd, /etc).
+  /^\/[^\s]*$/,
+  // Traversal explícito: segmento ".." en cualquier posición.
+  /(^|[\\/])\.\.([\\/]|$)/,
 ];
 
 /** Env que se hereda al proceso del comando (mínimo). */
@@ -73,7 +74,7 @@ const HOST_UNSAFE_INTERPRETERS = new Set([
  */
 export function assertHostModeAllowed(command: string, args: string[]): void {
   void args;
-  const bin = command.split("/").pop() ?? command;
+  const bin = baseName(command);
 
   if (HOST_UNSAFE_INTERPRETERS.has(bin)) {
     throw new SecurityError(
@@ -118,7 +119,7 @@ export async function resolveInsideWorkspace(taskId: string, cwd?: string): Prom
   }
   const resolved = resolve(workspace, cwd);
   const rel = relative(workspace, resolved);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  if (isOutside(rel)) {
     throw new SecurityError(`cwd escapa del workspace: ${cwd}`);
   }
   // Chequeo real: el cwd (o un directorio intermedio) puede ser un
@@ -162,16 +163,24 @@ export async function assertRealPathInside(baseDir: string, resolvedPath: string
       missing = true;
     }
   }
-  const rel = relative(baseDir, target);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  // baseDir también puede atravesar symlinks (ej: /tmp, ruta relativa).
+  const realBase = await realpath(baseDir).catch(() => resolve(baseDir));
+  const rel = relative(realBase, target);
+  if (isOutside(rel)) {
     throw new SecurityError(`Ruta real fuera del workspace: ${resolvedPath}`);
   }
   void missing;
 }
 
+/** true si una ruta relativa sale de su base. */
+function isOutside(rel: string): boolean {
+  return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel);
+}
+
 /** Valida comando + args contra la denylist. Lanza SecurityError si falla. */
 export function assertCommandAllowed(command: string, args: string[]): void {
-  const bin = command.split("/").pop() ?? command;
+  if (command.includes("\0")) throw new SecurityError("Comando inválido");
+  const bin = baseName(command);
 
   if (DENYLISTED_BINARIES.has(bin)) {
     throw new SecurityError(`Comando denegado: ${bin}`);
@@ -194,9 +203,15 @@ export class SecurityError extends Error {
   }
 }
 
+/** Nombre base ignorando barras finales (evita "bash/" o "/bin//bash"). */
+function baseName(command: string): string {
+  const trimmed = command.replace(/\/+$/, "");
+  return trimmed.split("/").pop() ?? trimmed;
+}
+
 /** Join seguro: evita que taskId contenga traversal. */
 function joinSafe(root: string, taskId: string): string {
-  if (taskId.includes("..") || taskId.includes("/") || taskId.includes("\\")) {
+  if (taskId.includes("\0") || taskId.includes("..") || taskId.includes("/") || taskId.includes("\\")) {
     throw new SecurityError(`taskId inválido: ${taskId}`);
   }
   return resolve(root, taskId);
@@ -216,7 +231,12 @@ export function buildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   }
   for (const [key, value] of Object.entries(extra ?? {})) {
     // No se permite pisar PATH desde el request.
-    if (key === "PATH" || key === "LD_PRELOAD" || key === "NODE_OPTIONS") continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (
+      key === "PATH" || key === "HOME" || key === "BASH_ENV" || key === "ENV" ||
+      key === "NODE_OPTIONS" || key === "PYTHONPATH" || key === "PYTHONSTARTUP" ||
+      key.startsWith("LD_") || key.startsWith("DYLD_")
+    ) continue;
     env[key] = String(value);
   }
   return env;
@@ -235,6 +255,8 @@ export interface DockerRunOptions {
   networkMode: string;
   /** Env mínimo para el proceso dentro del contenedor. */
   env: NodeJS.ProcessEnv;
+  /** Nombre del contenedor (permite `docker kill` en timeout). */
+  name?: string;
   /** Comando a ejecutar. */
   command: string;
   /** Args del comando. */
@@ -293,6 +315,7 @@ export function dockerArgsFor(options: DockerRunOptions): string[] {
     "--user",
     "1000:1000",
   ];
+  if (options.name) args.push("--name", options.name);
 
   if (options.cpus > 0) {
     args.push("--cpus", String(options.cpus));

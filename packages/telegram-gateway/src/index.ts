@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   dispatcher.start();
 
   // Cuando agent-core notifica un resultado, se entrega por Telegram.
-  startResultsServer((payload: ResultPayload) => {
+  const server = startResultsServer((payload: ResultPayload) => {
     console.log(`[gateway] Resultado recibido para tarea ${payload.taskId}`);
     void deliverResult(payload).catch((error) => {
       console.error("[gateway] Error entregando resultado:", error);
@@ -57,6 +57,7 @@ async function main(): Promise<void> {
 
   const stop = () => {
     dispatcher.stop();
+    server.close();
     void checkpoint.flush().finally(() => bot.stop());
   };
   process.once("SIGINT", stop);

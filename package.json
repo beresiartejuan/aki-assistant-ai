@@ -12,6 +12,7 @@
     "clean": "pnpm -r run clean",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
-    "lint": "pnpm -r run lint"
+    "lint": "pnpm -r run lint",
+    "check": "pnpm typecheck && pnpm test"
   }
 }

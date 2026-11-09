@@ -34,7 +34,7 @@ export const deliverFile: Tool<{ path: string; description?: string }> = {
       throw new ToolError("No hay registro de entregables en esta ejecución");
     }
     const clean = args.path.replace(/^\//, "").replace(/\\/g, "/");
-    if (!clean || clean.startsWith("..") || clean.includes("../")) {
+    if (!clean || clean.split("/").includes("..")) {
       throw new ToolError(`Path inválido: ${args.path}`);
     }
     if (ctx.deliverables.has(clean)) {

@@ -153,7 +153,7 @@ async function runAgentLoop(
 
         messages.push({
           role: "tool",
-          content: JSON.stringify(result.ok ? result.result : { error: result.error }),
+          content: JSON.stringify(result.ok ? (result.result ?? null) : { error: result.error }),
           tool_name: call.function.name,
         } as unknown as ChatMessage);
       }

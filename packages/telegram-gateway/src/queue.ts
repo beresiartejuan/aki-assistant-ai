@@ -12,6 +12,7 @@ import type { Message, QueuedMessage } from "./types.js";
 export class PersistentQueue {
   private items: QueuedMessage[] = [];
   private loaded = false;
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath: string) {}
 
@@ -90,7 +91,15 @@ export class PersistentQueue {
   }
 
   /** Persiste la cola con escritura atómica: escribe tmp y renombra. */
-  private async persist(): Promise<void> {
+  private persist(): Promise<void> {
+    // Serializa las escrituras: cada una espera a la anterior y serializa
+    // el estado vigente en el momento de escribir.
+    const run = this.writeChain.then(() => this.writeAtomic());
+    this.writeChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async writeAtomic(): Promise<void> {
     const tmp = `${this.filePath}.tmp`;
     await mkdir(dirname(this.filePath), { recursive: true });
     await writeFile(tmp, JSON.stringify(this.items, null, 2), "utf8");

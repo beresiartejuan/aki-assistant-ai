@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import type { CommandRequest, CommandResult } from "./types.js";
 import {
@@ -71,8 +72,11 @@ export class CommandRunner {
     assertCommandAllowed(req.command, req.args);
 
     // El workspace de la tarea se monta en /workspace del contenedor.
-    await ensureWorkspace(req.taskId);
-    const hostWorkspace = await resolveInsideWorkspace(req.taskId, req.cwd ?? undefined);
+    // Se monta SIEMPRE la raíz del workspace; cwd (ya validado, incluyendo
+    // symlinks) se aplica como --workdir dentro del contenedor.
+    const hostWorkspace = await ensureWorkspace(req.taskId);
+    await resolveInsideWorkspace(req.taskId, req.cwd ?? undefined);
+    const containerName = `aki-sbx-${randomUUID()}`;
 
     // docker run con límites de recursos y auto-eliminación.
     const dockerArgs = dockerArgsFor({
@@ -85,6 +89,7 @@ export class CommandRunner {
       command: req.command,
       args: req.args,
       userCwd: req.cwd,
+      name: containerName,
     });
 
     const timeoutMs = Math.min(req.timeoutMs ?? config.defaultTimeoutMs, config.maxTimeoutMs);
@@ -97,7 +102,10 @@ export class CommandRunner {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const out = await collectOutput(child, timeoutMs, config.maxOutputChars);
+    const out = await collectOutput(child, timeoutMs, config.maxOutputChars, () => {
+      // Matar el CLI no detiene el contenedor: se mata por nombre.
+      spawn("docker", ["kill", containerName], { stdio: "ignore" }).on("error", () => {});
+    });
     return finishResult(req, out, start);
   }
 
@@ -115,10 +123,18 @@ export class CommandRunner {
       cwd,
       env: buildEnv(req.env),
       shell: false,
+      detached: true, // grupo propio: se mata todo el árbol en timeout
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const out = await collectOutput(child, timeoutMs, config.maxOutputChars);
+    const killGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (child.pid) process.kill(-child.pid, signal);
+      } catch {
+        /* ya terminó */
+      }
+    };
+    const out = await collectOutput(child, timeoutMs, config.maxOutputChars, undefined, killGroup);
     return finishResult(req, out, start);
   }
 }
@@ -137,6 +153,8 @@ function collectOutput(
   child: ReturnType<typeof spawn>,
   timeoutMs: number,
   maxChars: number,
+  onTimeout?: () => void,
+  killFn?: (signal: NodeJS.Signals) => void,
 ): Promise<RawOutput> {
   return new Promise((resolve) => {
     let stdout = "";
@@ -145,18 +163,20 @@ function collectOutput(
     let timedOut = false;
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      if (stdout.length < maxChars) stdout += chunk.toString("utf8");
+      if (stdout.length < maxChars) stdout += chunk.toString("utf8").slice(0, maxChars - stdout.length + 1);
       else truncated = true;
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderr.length < maxChars) stderr += chunk.toString("utf8");
+      if (stderr.length < maxChars) stderr += chunk.toString("utf8").slice(0, maxChars - stderr.length + 1);
       else truncated = true;
     });
 
     const killTimer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000).unref();
+      const kill = killFn ?? ((s: NodeJS.Signals) => child.kill(s));
+      kill("SIGTERM");
+      onTimeout?.();
+      setTimeout(() => kill("SIGKILL"), 2000).unref();
     }, timeoutMs);
 
     child.on("error", (error) => {

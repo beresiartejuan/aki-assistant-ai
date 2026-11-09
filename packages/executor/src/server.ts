@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute } from "node:path";
 import { config } from "./config.js";
@@ -16,6 +17,8 @@ const runner = new CommandRunner();
 // health-checks.
 app.use("/exec", requireInternalKey());
 app.use("/files/*", requireInternalKey());
+app.use("/exec", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }));
+app.use("/files/*", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }));
 app.use("/artifacts/*", requireInternalKey());
 
 /** MIME types mínimos para servir artifacts. */
@@ -66,7 +69,7 @@ async function resolveArtifactPath(taskId: string, filePath: string): Promise<st
     ? join(workspace, filePath)
     : join(workspace, filePath);
   const rel = relative(workspace, resolved);
-  if (rel.startsWith("..") || isAbsolute(rel) || rel === "") {
+  if (rel === ".." || rel.startsWith("../") || isAbsolute(rel) || rel === "") {
     throw new SecurityError(`Ruta fuera del workspace: ${filePath}`);
   }
   await assertRealPathInside(workspace, resolved);
@@ -127,6 +130,9 @@ app.get("/artifacts/:taskId/:path{.+}", async (c) => {
       200,
       {
         "Content-Type": mimeFor(filePath),
+        // Contenido generado por el agente: nunca ejecutable en este origen.
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox allow-scripts",
         "Content-Disposition": `inline; filename="${(filePath.split("/").pop() ?? "file").replace(/"/g, "")}"`,
       },
     );

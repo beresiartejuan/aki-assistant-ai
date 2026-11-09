@@ -9,11 +9,20 @@ function loadEnvFile(): void {
 loadEnvFile();
 
 export const config = {
-  /** Clave de la API de Ollama Cloud (obligatoria). */
+  /** Clave de la API de Ollama (opcional si OLLAMA_BASE_URL es localhost). */
   ollamaApiKey: process.env.OLLAMA_API_KEY ?? "",
 
   /** URL base de la API de Ollama Cloud. */
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "https://ollama.com",
+
+  /** Timeout por petición a Ollama (ms). */
+  ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_MS) || 120_000,
+
+  /** Reintentos ante 429/5xx/errores de red. */
+  ollamaMaxRetries: Math.max(0, Number(process.env.OLLAMA_MAX_RETRIES ?? 2) || 0),
+
+  /** Base del backoff exponencial entre reintentos (ms). */
+  ollamaRetryBaseMs: Number(process.env.OLLAMA_RETRY_BASE_MS) || 500,
 
   /** Modelo a usar en el razonamiento del agente. */
   ollamaModel: process.env.OLLAMA_MODEL ?? "nemotron-3-nano:30b",
